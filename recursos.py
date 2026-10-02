@@ -308,7 +308,9 @@ def instalar(app,c):
             admin(request,db)
             last=db.execute('SELECT criado_em,checksum FROM copias ORDER BY criado_em DESC LIMIT 1').fetchone()
             failures=db.execute("SELECT COUNT(*) AS total FROM eventos_email WHERE status='falhou' AND criado_em>?",((datetime.now(br)-timedelta(days=1)).isoformat(),)).fetchone()['total']
-        return {'email_configurado':email_pronto(),'falhas_email_24h':failures,'ultima_copia':dict(last) if last else None,'backup_automatico':False}
+        # A execução na nuvem é externa: este painel não consulta o status do GitHub.
+        return {'email_configurado':email_pronto(),'falhas_email_24h':failures,'ultima_copia':dict(last) if last else None,'backup_automatico':None,'backup_provedor':'github_actions'}
 
     # Pontos de integração usados pelo núcleo e pelos testes de envio, sem expor tokens em respostas.
     c.update({'registrar_aceite':registrar_aceite,'email_pronto':email_pronto,'email_confirmado':email_confirmado,'enviar_acao_email':enviar_acao_email,'enviar_email':enviar_email,'bloqueado':bloqueado,'criar_link_cliente':criar_link_cliente,'backup_payload':backup_payload,'BACKUP_TABLES':TABLES})
+
