@@ -3,3 +3,6 @@
 __pycache__/
 *.db
 *.db-*
+*PRIVADA*.pem
+backup-cifrado/
+backup-aberto*.json
