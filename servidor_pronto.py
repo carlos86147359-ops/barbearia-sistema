@@ -1,6 +1,6 @@
 """Mantém compatibilidade com o comando de inicialização do projeto original."""
 import os
-from servidor import app
+from app import app
 
 if __name__ == '__main__':
     import uvicorn

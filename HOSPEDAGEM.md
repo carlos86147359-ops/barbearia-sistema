@@ -1,17 +1,28 @@
-# Hospedagem gratuita para começar
+# BarberSaaS — contas de barbearias
 
-Configuração preparada: Render Free para executar o servidor e Neon Free para guardar os agendamentos em PostgreSQL. O computador pode ficar desligado. Ainda não foi publicado.
+Cada dono cria sua conta em /cadastro, configura o negócio em /painel e compartilha /b/endereco-da-barbearia. Serviços, preços, duração, profissionais, comissão, dias e períodos de funcionamento são editáveis pelo dono. As reservas mantêm o preço, duração e comissão da criação.
 
-1. Crie uma conta no Neon (https://neon.com) e um projeto no plano Free. A conexão fornecida no painel contém uma senha: mantenha-a privada.
-2. Coloque esta pasta em um repositório privado do GitHub, sem senhas nem bancos locais.
-3. No Render (https://render.com), crie um Web Service ligado ao repositório, com ambiente Docker e plano Free. Configure a pasta raiz se o projeto estiver em uma subpasta.
-4. Nas variáveis do Render, configure DATABASE_URL com a conexão do Neon, mantendo as opções de segurança da URL. Não é necessário disco persistente. As tabelas são criadas automaticamente.
-5. O Render fornece um endereço HTTPS; não é necessário comprar domínio.
+O cliente agenda sem precisar criar conta. O dono consulta, conclui, cancela e reabre reservas, e pode exportar os dados em CSV. Cancelar libera o horário; reabrir verifica se outra reserva o ocupou. Os dados de uma barbearia não são disponibilizados a contas de outra.
 
-O Render gratuito suspende o servidor após 15 minutos sem acesso. A primeira visita depois disso pode demorar. Ambos os serviços possuem limites de uso; mantenha os planos gratuitos e confira suas condições antes de ativar. Não há garantia de disponibilidade contínua.
+## Executar localmente
 
-Documentação: https://render.com/docs/free e https://neon.com/pricing.
+Python 3.10 ou superior:
 
-Sem DATABASE_URL, a aplicação usa SQLite para testes locais. Não use essa opção na hospedagem gratuita: seus arquivos são temporários. As reservas locais não são migradas automaticamente para o Neon.
+```
+python -m pip install -r requirements.txt
+python servidor_pronto.py
+```
 
-Antes de liberar para clientes, implemente login e permissões dos painéis. Hoje as rotas de listagem e conclusão estão sem autenticação. A adaptação PostgreSQL ainda precisa de teste com um banco real.
+Abra http://localhost:8000. Sem DATABASE_URL, o banco SQLite fica nesta pasta. Com DATABASE_URL, usa PostgreSQL. Em Render, a variável é obrigatória. O serviço atual usa o comando uvicorn servidor_pronto:app --host 0.0.0.0 --port $PORT.
+
+## Hospedagem
+
+Render Free executa o servidor e Neon Free mantém o banco. Não é necessário disco persistente. O servidor pode entrar em suspensão após inatividade; os planos possuem limites. Mantenha ambos os serviços no plano gratuito. DATABASE_URL deve ficar apenas nas variáveis protegidas do Render.
+
+A versão anterior usava uma agenda única sem contas. Os dados antigos permanecem identificados como demonstração e não são atribuídos automaticamente a donos recém-cadastrados. A demonstração não aceita reservas novas.
+
+## Operação e limites desta versão
+
+A conta do dono controla a barbearia. Ainda não há contas separadas de funcionários, cobrança de assinatura ou recuperação automática de senha por e-mail. Os e-mails não são verificados; o dono deve guardar sua senha com cuidado. Notificações WhatsApp abrem mensagens para envio manual, sem envio automático.
+
+Há sessões de 12 horas, senhas armazenadas com hash, proteção contra alterações por outra origem, limitação básica de tentativas e isolamento por estabelecimento. A recuperação de dados do Neon depende do plano; exportar o CSV das reservas periodicamente dá uma cópia para consulta, mas não substitui backup completo de contas e configurações.

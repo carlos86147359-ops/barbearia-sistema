@@ -1,0 +1,377 @@
+"""Agenda de barbearias com contas, configuração e isolamento por estabelecimento."""
+import hashlib
+import hmac
+import json
+import os
+import re
+import secrets
+import sqlite3
+import time
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
+
+ROOT = Path(__file__).resolve().parent
+DATABASE_URL = os.environ.get('DATABASE_URL')
+DB_PATH = os.environ.get('BARBER_DB_PATH', str(ROOT / 'barbearia.db'))
+CLOUD = bool(os.environ.get('RENDER'))
+if CLOUD and not DATABASE_URL:
+    raise RuntimeError('Configure DATABASE_URL com o banco Neon.')
+BRASIL = timezone(timedelta(hours=-3))
+COOKIE = 'barber_session'
+SESSION_SECONDS = 60 * 60 * 12
+
+class Postgres:
+    def __init__(self, db): self.db = db
+    def execute(self, sql, params=()): return self.db.execute(sql.replace('?', '%s'), params)
+
+@contextmanager
+def banco():
+    if DATABASE_URL:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=15) as db:
+            yield Postgres(db)
+    else:
+        db = sqlite3.connect(DB_PATH, timeout=15)
+        db.row_factory = sqlite3.Row
+        try:
+            with db: yield db
+        finally: db.close()
+
+def padrao():
+    return {'nome':'Barbearia de demonstração', 'whatsapp':'', 'comissao':50,
+            'barbeiros':[{'id':'carlos','nome':'Carlos Henrique'}, {'id':'marcos','nome':'Marcos Silva'}, {'id':'diego','nome':'Diego Barba'}],
+            'servicos':[{'id':'corte','nome':'Corte Cabelo Fade','preco':65,'duracao':60}, {'id':'barba','nome':'Barboterapia Completa','preco':50,'duracao':60}, {'id':'combo','nome':'Combo Cabelo + Barba','preco':105,'duracao':120}],
+            'dias':[0,1,2,3,4,5,6], 'periodos':[{'inicio':'09:00','fim':'12:00'}, {'inicio':'14:00','fim':'19:00'}], 'intervalo':30}
+
+def iniciar():
+    with banco() as db:
+        db.execute('CREATE TABLE IF NOT EXISTS lojas (id TEXT PRIMARY KEY, slug TEXT UNIQUE NOT NULL, configuracao TEXT NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS usuarios (id TEXT PRIMARY KEY, loja_id TEXT UNIQUE NOT NULL, email TEXT UNIQUE NOT NULL, senha TEXT NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS sessoes (token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, csrf TEXT NOT NULL, expira BIGINT NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS limites (chave TEXT PRIMARY KEY, janela BIGINT NOT NULL, quantidade INTEGER NOT NULL)')
+        chave = 'BIGSERIAL PRIMARY KEY' if DATABASE_URL else 'INTEGER PRIMARY KEY'
+        db.execute(f'''CREATE TABLE IF NOT EXISTS agendamentos (id {chave}, cliente_nome TEXT NOT NULL, cliente_telefone TEXT NOT NULL,
+            barbeiro_nome TEXT NOT NULL, servico_nome TEXT NOT NULL, data_hora TEXT NOT NULL, preco REAL NOT NULL, criado_em TEXT,
+            status TEXT NOT NULL DEFAULT 'agendado', inicio TEXT, duracao_minutos INTEGER NOT NULL DEFAULT 60,
+            loja_id TEXT NOT NULL DEFAULT 'demo', barbeiro_id TEXT, servico_id TEXT, comissao_pct INTEGER NOT NULL DEFAULT 50)''')
+        if DATABASE_URL:
+            cols = {r['name'] for r in db.execute("SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agendamentos'")}
+        else: cols = {r['name'] for r in db.execute('PRAGMA table_info(agendamentos)')}
+        for name, definition in [('status',"TEXT NOT NULL DEFAULT 'agendado'"), ('inicio','TEXT'), ('duracao_minutos','INTEGER NOT NULL DEFAULT 60'), ('loja_id',"TEXT NOT NULL DEFAULT 'demo'"), ('barbeiro_id','TEXT'), ('servico_id','TEXT'), ('comissao_pct','INTEGER NOT NULL DEFAULT 50')]:
+            if name not in cols: db.execute(f'ALTER TABLE agendamentos ADD COLUMN {name} {definition}')
+        demo = padrao()
+        db.execute('INSERT INTO lojas (id,slug,configuracao) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING', ('demo','barbearia',json.dumps(demo)))
+        for row in db.execute('SELECT * FROM agendamentos WHERE inicio IS NULL OR barbeiro_id IS NULL').fetchall():
+            inicio = row['inicio'] or datetime.strptime(row['data_hora'],'%Y-%m-%d às %H:%M').isoformat(timespec='minutes')
+            barber = next((b['id'] for b in demo['barbeiros'] if b['nome']==row['barbeiro_nome']), 'antigo-'+str(row['id']))
+            service = next((s for s in demo['servicos'] if s['nome']==row['servico_nome']), None)
+            db.execute('UPDATE agendamentos SET inicio=?, barbeiro_id=?, servico_id=? WHERE id=?', (inicio,barber,service['id'] if service else None,row['id']))
+            if 'duracao_minutos' not in cols and service:
+                db.execute('UPDATE agendamentos SET duracao_minutos=? WHERE id=?',(service['duracao'],row['id']))
+        db.execute('CREATE INDEX IF NOT EXISTS agenda_loja_inicio ON agendamentos(loja_id,inicio)')
+
+iniciar()
+app = FastAPI(title='BarberSaaS', version='2.0.0', docs_url=None if CLOUD else '/docs', redoc_url=None)
+
+@app.middleware('http')
+async def protecoes(request: Request, call_next):
+    # Os formulários legítimos usam a mesma origem. Evita alterações por outros sites.
+    if request.method in ('POST','PATCH','PUT','DELETE'):
+        origin = request.headers.get('origin')
+        expected = os.environ.get('PUBLIC_BASE_URL', str(request.base_url).rstrip('/'))
+        if origin and origin.rstrip('/') != expected:
+            return Response('Origem inválida.', status_code=403)
+    response = await call_next(request)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'same-origin'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+def hash_senha(password):
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),310000).hex()
+    return salt + ':' + digest
+
+def confere_senha(password, stored):
+    salt, digest = stored.split(':')
+    actual = hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),310000).hex()
+    return hmac.compare_digest(digest, actual)
+
+def limite(db, request, action, maximum, seconds=900):
+    ip = request.client.host if request.client else 'local'
+    # Render fornece o IP do cliente no cabeçalho de proxy.
+    if CLOUD: ip = request.headers.get('x-forwarded-for',ip).split(',')[0].strip()
+    key = hashlib.sha256((action+':'+ip).encode()).hexdigest()
+    window = int(time.time()) // seconds
+    row = db.execute('''INSERT INTO limites(chave,janela,quantidade) VALUES (?,?,1)
+        ON CONFLICT(chave) DO UPDATE SET quantidade=CASE WHEN limites.janela=excluded.janela THEN limites.quantidade+1 ELSE 1 END, janela=excluded.janela RETURNING quantidade''',(key,window)).fetchone()
+    return row['quantidade'] > maximum
+
+def limitar(request, action, maximum, seconds=900):
+    with banco() as db: blocked = limite(db,request,action,maximum,seconds)
+    if blocked: raise HTTPException(429,'Muitas tentativas. Aguarde alguns minutos.')
+
+def usuario(request, db, change=False):
+    raw = request.cookies.get(COOKIE,'')
+    token = hashlib.sha256(raw.encode()).hexdigest()
+    row = db.execute('''SELECT usuarios.*, sessoes.csrf FROM sessoes JOIN usuarios ON usuarios.id=sessoes.usuario_id
+        WHERE sessoes.token=? AND sessoes.expira>?''',(token,int(time.time()))).fetchone()
+    if not row: raise HTTPException(401,'Entre na sua conta para acessar o painel.')
+    if change and not hmac.compare_digest(row['csrf'],request.headers.get('x-csrf-token','')):
+        raise HTTPException(403,'Atualize a página e tente novamente.')
+    return dict(row)
+
+def abrir_sessao(db, user_id, response):
+    raw, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
+    db.execute('DELETE FROM sessoes WHERE expira<?',(int(time.time()),))
+    db.execute('INSERT INTO sessoes(token,usuario_id,csrf,expira) VALUES(?,?,?,?)', (hashlib.sha256(raw.encode()).hexdigest(),user_id,csrf,int(time.time())+SESSION_SECONDS))
+    response.set_cookie(COOKIE,raw,httponly=True,secure=CLOUD,samesite='lax',max_age=SESSION_SECONDS,path='/')
+    return csrf
+
+class Acesso(BaseModel):
+    email: str = Field(min_length=3,max_length=150)
+    senha: str = Field(min_length=10,max_length=128)
+
+class Cadastro(Acesso):
+    nome: str = Field(min_length=2,max_length=100)
+    slug: str = Field(min_length=3,max_length=50)
+
+def email_valido(email):
+    email=email.strip().lower()
+    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email): raise HTTPException(422,'Informe um e-mail válido.')
+    return email
+
+@app.post('/api/cadastro',status_code=201)
+def cadastrar(data: Cadastro, request: Request, response: Response):
+    limitar(request,'cadastro',10,3600)
+    email=email_valido(data.email)
+    slug=data.slug.strip().lower()
+    if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*',slug): raise HTTPException(422,'Use letras minúsculas, números e hífens no endereço.')
+    shop_id,user_id=secrets.token_hex(16),secrets.token_hex(16)
+    config={'nome':data.nome.strip(),'whatsapp':'','comissao':50,'barbeiros':[],'servicos':[],'dias':[0,1,2,3,4,5],'periodos':[{'inicio':'09:00','fim':'19:00'}],'intervalo':30}
+    if len(config['nome'])<2: raise HTTPException(422,'Informe o nome da barbearia.')
+    with banco() as db:
+        if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
+        else: db.execute('BEGIN IMMEDIATE')
+        if db.execute('SELECT id FROM usuarios WHERE email=?',(email,)).fetchone(): raise HTTPException(409,'Esse e-mail já possui conta. Use Entrar.')
+        if db.execute('SELECT id FROM lojas WHERE slug=?',(slug,)).fetchone(): raise HTTPException(409,'Esse endereço já está em uso. Escolha outro.')
+        db.execute('INSERT INTO lojas(id,slug,configuracao) VALUES(?,?,?)',(shop_id,slug,json.dumps(config)))
+        db.execute('INSERT INTO usuarios(id,loja_id,email,senha) VALUES(?,?,?,?)',(user_id,shop_id,email,hash_senha(data.senha)))
+        csrf=abrir_sessao(db,user_id,response)
+    return {'csrf':csrf,'slug':slug}
+
+@app.post('/api/login')
+def login(data: Acesso, request: Request, response: Response):
+    limitar(request,'login',20)
+    email=email_valido(data.email)
+    with banco() as db:
+        row=db.execute('SELECT * FROM usuarios WHERE email=?',(email,)).fetchone()
+        stored=row['senha'] if row else '00'*16+':'+'00'*32
+        if not confere_senha(data.senha,stored) or not row: raise HTTPException(401,'E-mail ou senha incorretos.')
+        csrf=abrir_sessao(db,row['id'],response)
+    return {'csrf':csrf}
+
+@app.get('/api/sessao')
+def sessao(request: Request):
+    with banco() as db:
+        user=usuario(request,db)
+        shop=db.execute('SELECT slug FROM lojas WHERE id=?',(user['loja_id'],)).fetchone()
+    return {'email':user['email'],'csrf':user['csrf'],'slug':shop['slug']}
+
+@app.post('/api/logout')
+def logout(request: Request,response: Response):
+    with banco() as db:
+        usuario(request,db,True)
+        db.execute('DELETE FROM sessoes WHERE token=?',(hashlib.sha256(request.cookies.get(COOKIE,'').encode()).hexdigest(),))
+    response.delete_cookie(COOKIE,path='/')
+    return {'status':'ok'}
+
+class Barbeiro(BaseModel):
+    id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,50}$')
+    nome: str = Field(min_length=2,max_length=100)
+
+class Servico(Barbeiro):
+    preco: Decimal = Field(gt=0,le=10000,max_digits=7,decimal_places=2)
+    duracao: int = Field(ge=5,le=480)
+
+class Periodo(BaseModel):
+    inicio: str = Field(pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
+    fim: str = Field(pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
+
+class Configuracao(BaseModel):
+    nome: str = Field(min_length=2,max_length=100)
+    whatsapp: str = Field(max_length=25)
+    comissao: int = Field(ge=0,le=100)
+    barbeiros: list[Barbeiro] = Field(max_length=30)
+    servicos: list[Servico] = Field(max_length=60)
+    dias: list[int] = Field(max_length=7)
+    periodos: list[Periodo] = Field(max_length=4)
+    intervalo: int = Field(ge=5,le=120)
+
+def config_da_loja(db,shop_id):
+    return json.loads(db.execute('SELECT configuracao FROM lojas WHERE id=?',(shop_id,)).fetchone()['configuracao'])
+
+@app.get('/api/configuracao')
+def ler_config(request: Request):
+    with banco() as db: return config_da_loja(db,usuario(request,db)['loja_id'])
+
+@app.put('/api/configuracao')
+def salvar_config(data: Configuracao,request: Request):
+    config=json.loads(data.model_dump_json())
+    config['nome']=config['nome'].strip()
+    config['whatsapp']=re.sub(r'\D','',config['whatsapp'])
+    if len(config['nome'])<2 or (config['whatsapp'] and len(config['whatsapp']) not in (10,11,12,13)):
+        raise HTTPException(422,'Confira o nome da barbearia e o WhatsApp com DDD.')
+    if not config['dias'] or any(d not in range(7) for d in config['dias']) or len(set(config['dias'])) != len(config['dias']): raise HTTPException(422,'Escolha os dias de funcionamento.')
+    for kind in ('barbeiros','servicos'):
+        values=config[kind]
+        if len({v['id'] for v in values}) != len(values) or any(len(v['nome'].strip())<2 for v in values): raise HTTPException(422,'Confira os nomes e os itens duplicados.')
+        for v in values: v['nome']=v['nome'].strip()
+    periods=sorted(config['periodos'],key=lambda p:p['inicio'])
+    if not periods or any(p['inicio']>=p['fim'] for p in periods) or any(a['fim']>b['inicio'] for a,b in zip(periods,periods[1:])): raise HTTPException(422,'Os períodos devem ter início antes do fim e não podem se sobrepor.')
+    config['periodos']=periods
+    with banco() as db:
+        user=usuario(request,db,True)
+        db.execute('UPDATE lojas SET configuracao=? WHERE id=?',(json.dumps(config),user['loja_id']))
+    return config
+
+def loja_publica(db,slug):
+    shop=db.execute('SELECT * FROM lojas WHERE slug=?',(slug,)).fetchone()
+    if not shop: raise HTTPException(404,'Barbearia não encontrada.')
+    return shop,json.loads(shop['configuracao'])
+
+@app.get('/api/publico/{slug}/configuracao')
+def publico(slug: str):
+    with banco() as db: shop,config=loja_publica(db,slug)
+    return {k:v for k,v in config.items() if k!='comissao'}
+
+def escolher(config,barber_id,service_id):
+    barber=next((b for b in config['barbeiros'] if b['id']==barber_id),None)
+    service=next((s for s in config['servicos'] if s['id']==service_id),None)
+    if not barber or not service: raise HTTPException(422,'Escolha um profissional e um serviço disponíveis.')
+    return barber,service
+
+def inicio_valido(config,day,hour,duration):
+    try: start=datetime.fromisoformat(f'{day.isoformat()}T{hour}')
+    except ValueError: raise HTTPException(422,'Horário inválido.')
+    if not re.fullmatch(r'\d{2}:\d{2}',hour): raise HTTPException(422,'Horário inválido.')
+    if day.weekday() not in config['dias']: raise HTTPException(422,'A barbearia não abre nesse dia.')
+    end=start+timedelta(minutes=duration)
+    valid=False
+    for p in config['periodos']:
+        a=datetime.fromisoformat(f"{day}T{p['inicio']}")
+        b=datetime.fromisoformat(f"{day}T{p['fim']}")
+        offset=int((start-a).total_seconds()//60)
+        if a<=start and end<=b and offset%config['intervalo']==0: valid=True
+    if not valid: raise HTTPException(422,'O serviço não cabe nesse horário de funcionamento.')
+    if start.replace(tzinfo=BRASIL)<=datetime.now(BRASIL): raise HTTPException(422,'Escolha um horário futuro.')
+    if day>datetime.now(BRASIL).date()+timedelta(days=180): raise HTTPException(422,'Agende com no máximo 180 dias de antecedência.')
+    return start
+
+def ocupado(db,shop_id,barber_id,start,duration,ignore=0):
+    end=start+timedelta(minutes=duration)
+    rows=db.execute("SELECT inicio,duracao_minutos FROM agendamentos WHERE loja_id=? AND barbeiro_id=? AND status!='cancelado' AND inicio LIKE ? AND id!=?",(shop_id,barber_id,start.date().isoformat()+'%',ignore))
+    return any(start<datetime.fromisoformat(r['inicio'])+timedelta(minutes=r['duracao_minutos']) and datetime.fromisoformat(r['inicio'])<end for r in rows)
+
+@app.get('/api/publico/{slug}/disponibilidade')
+def disponibilidade(slug: str,data: date,barbeiro_id: str,servico_id: str):
+    with banco() as db:
+        shop,config=loja_publica(db,slug)
+        barber,service=escolher(config,barbeiro_id,servico_id)
+        hours=[]
+        for p in config['periodos']:
+            cur=datetime.fromisoformat(f"{data}T{p['inicio']}")
+            end=datetime.fromisoformat(f"{data}T{p['fim']}")
+            while cur<end:
+                hour=cur.strftime('%H:%M')
+                try: start=inicio_valido(config,data,hour,service['duracao'])
+                except HTTPException: cur+=timedelta(minutes=config['intervalo']); continue
+                if not ocupado(db,shop['id'],barber['id'],start,service['duracao']): hours.append(hour)
+                cur+=timedelta(minutes=config['intervalo'])
+    return {'horarios':hours}
+
+class Reserva(BaseModel):
+    cliente_nome: str = Field(min_length=2,max_length=100)
+    cliente_telefone: str = Field(min_length=10,max_length=25)
+    barbeiro_id: str
+    servico_id: str
+    data: date
+    horario: str
+
+def travar(db,shop_id,barber_id):
+    if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(hashtext(?))',(shop_id+':'+barber_id,))
+    else: db.execute('BEGIN IMMEDIATE')
+
+@app.post('/api/publico/{slug}/agendamentos',status_code=201)
+def criar(slug: str,data: Reserva,request: Request):
+    limitar(request,'agendar',30)
+    name=data.cliente_nome.strip()
+    phone=re.sub(r'\D','',data.cliente_telefone)
+    if phone.startswith('55') and len(phone) in (12,13): phone=phone[2:]
+    if len(name)<2 or len(phone) not in (10,11): raise HTTPException(422,'Informe seu nome e WhatsApp com DDD.')
+    with banco() as db:
+        # Em SQLite o bloqueio deve vir antes da leitura; no PostgreSQL isolamos por loja e profissional.
+        if not DATABASE_URL: db.execute('BEGIN IMMEDIATE')
+        shop,config=loja_publica(db,slug)
+        if shop['id']=='demo': raise HTTPException(400,'Esta é uma demonstração. Crie uma conta para abrir sua própria agenda.')
+        barber,service=escolher(config,data.barbeiro_id,data.servico_id)
+        if DATABASE_URL: travar(db,shop['id'],barber['id'])
+        start=inicio_valido(config,data.data,data.horario,service['duracao'])
+        if ocupado(db,shop['id'],barber['id'],start,service['duracao']): raise HTTPException(409,'Esse horário acabou de ser reservado. Escolha outro.')
+        sql='''INSERT INTO agendamentos(cliente_nome,cliente_telefone,barbeiro_nome,servico_nome,data_hora,preco,criado_em,status,inicio,duracao_minutos,loja_id,barbeiro_id,servico_id,comissao_pct)
+            VALUES(?,?,?,?,?,?,?,'agendado',?,?,?,?,?,?)'''
+        if DATABASE_URL: sql+=' RETURNING id'
+        cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} às {data.horario}',float(service['preco']),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
+        reservation_id=cur.fetchone()['id'] if DATABASE_URL else cur.lastrowid
+    message=f"Olá! Agendei {service['nome']} com {barber['nome']} em {config['nome']}, para {data.data} às {data.horario}. Meu nome é {name}. Reserva #{reservation_id}."
+    store_phone=config['whatsapp']
+    if len(store_phone) in (10,11): store_phone='55'+store_phone
+    return {'agendamento_id':reservation_id,'preco':service['preco'],'link_whatsapp':f'https://wa.me/{store_phone}?text={quote(message)}' if store_phone else None}
+
+@app.get('/api/agendamentos')
+def agenda(request: Request):
+    with banco() as db:
+        user=usuario(request,db)
+        return [dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? ORDER BY inicio,id',(user['loja_id'],))]
+
+class Situacao(BaseModel):
+    status: str
+
+@app.patch('/api/agendamentos/{reservation_id}')
+def alterar(reservation_id: int,data: Situacao,request: Request):
+    if data.status not in ('agendado','concluido','cancelado'): raise HTTPException(422,'Situação inválida.')
+    with banco() as db:
+        if not DATABASE_URL: db.execute('BEGIN IMMEDIATE')
+        user=usuario(request,db,True)
+        row=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(reservation_id,user['loja_id'])).fetchone()
+        if not row: raise HTTPException(404,'Agendamento não encontrado.')
+        if DATABASE_URL: travar(db,user['loja_id'],row['barbeiro_id'])
+        if row['status']=='cancelado' and data.status!='cancelado' and ocupado(db,user['loja_id'],row['barbeiro_id'],datetime.fromisoformat(row['inicio']),row['duracao_minutos'],reservation_id): raise HTTPException(409,'Esse horário já foi ocupado por outra reserva.')
+        db.execute('UPDATE agendamentos SET status=? WHERE id=? AND loja_id=?',(data.status,reservation_id,user['loja_id']))
+    return {'status':data.status}
+
+@app.get('/health')
+def health():
+    with banco() as db: db.execute('SELECT 1')
+    return {'status':'ok','banco':'postgresql' if DATABASE_URL else 'sqlite'}
+
+@app.head('/')
+def head(): return None
+
+@app.get('/',response_class=HTMLResponse)
+@app.get('/painel',response_class=HTMLResponse)
+@app.get('/entrar',response_class=HTMLResponse)
+@app.get('/cadastro',response_class=HTMLResponse)
+@app.get('/admin',response_class=HTMLResponse)
+@app.get('/barbeiro',response_class=HTMLResponse)
+@app.get('/b/{slug}',response_class=HTMLResponse)
+def pagina(): return (ROOT/'index.html').read_text(encoding='utf-8')
