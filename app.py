@@ -1,4 +1,5 @@
 """Agenda de barbearias com contas, configuração e isolamento por estabelecimento."""
+import calendar
 import hashlib
 import hmac
 import json
@@ -57,6 +58,8 @@ def iniciar():
         db.execute('CREATE TABLE IF NOT EXISTS usuarios (id TEXT PRIMARY KEY, loja_id TEXT UNIQUE NOT NULL, email TEXT UNIQUE NOT NULL, senha TEXT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS sessoes (token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, csrf TEXT NOT NULL, expira BIGINT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS limites (chave TEXT PRIMARY KEY, janela BIGINT NOT NULL, quantidade INTEGER NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS assinaturas (loja_id TEXT PRIMARY KEY, vencimento TEXT)')
+        db.execute('CREATE TABLE IF NOT EXISTS pagamentos (id TEXT PRIMARY KEY, loja_id TEXT NOT NULL, referencia TEXT UNIQUE NOT NULL, valor_centavos INTEGER NOT NULL, confirmado_por TEXT NOT NULL, confirmado_em TEXT NOT NULL, vencimento TEXT NOT NULL)')
         chave = 'BIGSERIAL PRIMARY KEY' if DATABASE_URL else 'INTEGER PRIMARY KEY'
         db.execute(f'''CREATE TABLE IF NOT EXISTS agendamentos (id {chave}, cliente_nome TEXT NOT NULL, cliente_telefone TEXT NOT NULL,
             barbeiro_nome TEXT NOT NULL, servico_nome TEXT NOT NULL, data_hora TEXT NOT NULL, preco REAL NOT NULL, criado_em TEXT,
@@ -154,6 +157,8 @@ def email_valido(email):
 def cadastrar(data: Cadastro, request: Request, response: Response):
     limitar(request,'cadastro',10,3600)
     email=email_valido(data.email)
+    if eh_admin({'email':email}):
+        raise HTTPException(409,'Esta conta está reservada para administração. Use Entrar.')
     slug=data.slug.strip().lower()
     if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*',slug): raise HTTPException(422,'Use letras minúsculas, números e hífens no endereço.')
     shop_id,user_id=secrets.token_hex(16),secrets.token_hex(16)
@@ -185,7 +190,7 @@ def sessao(request: Request):
     with banco() as db:
         user=usuario(request,db)
         shop=db.execute('SELECT slug FROM lojas WHERE id=?',(user['loja_id'],)).fetchone()
-    return {'email':user['email'],'csrf':user['csrf'],'slug':shop['slug']}
+    return {'email':user['email'],'csrf':user['csrf'],'slug':shop['slug'],'administrador':eh_admin(user)}
 
 @app.post('/api/logout')
 def logout(request: Request,response: Response):
@@ -194,6 +199,65 @@ def logout(request: Request,response: Response):
         db.execute('DELETE FROM sessoes WHERE token=?',(hashlib.sha256(request.cookies.get(COOKIE,'').encode()).hexdigest(),))
     response.delete_cookie(COOKIE,path='/')
     return {'status':'ok'}
+
+
+def eh_admin(user):
+    allowed={e.strip().lower() for e in os.environ.get('ADMIN_EMAILS','').split(',') if e.strip()}
+    return user['email'].lower() in allowed
+
+def administrador(request,db,change=False):
+    user=usuario(request,db,change)
+    if not eh_admin(user): raise HTTPException(403,'Acesso exclusivo do administrador do sistema.')
+    return user
+
+def cobranca_ativa(): return os.environ.get('BILLING_ENABLED','').lower()=='true'
+
+def assinatura(db,shop_id):
+    row=db.execute('SELECT vencimento FROM assinaturas WHERE loja_id=?',(shop_id,)).fetchone()
+    due=row['vencimento'] if row else None
+    active=bool(due and datetime.fromisoformat(due)>datetime.now(BRASIL))
+    return {'ativa':active or not cobranca_ativa() or shop_id=='demo', 'status':'ativa' if active else 'vencida' if due else 'aguardando_pagamento', 'vencimento':due,'valor':90,'cobranca_ativa':cobranca_ativa()}
+
+def exigir_assinatura(db,shop_id):
+    if not assinatura(db,shop_id)['ativa']: raise HTTPException(403,'Esta agenda está temporariamente indisponível. Fale com a barbearia.')
+
+@app.get('/api/assinatura')
+def minha_assinatura(request: Request):
+    with banco() as db:
+        user=usuario(request,db)
+        info=assinatura(db,user['loja_id'])
+        payments=[dict(r) for r in db.execute('SELECT valor_centavos,confirmado_em,vencimento FROM pagamentos WHERE loja_id=? ORDER BY confirmado_em DESC',(user['loja_id'],)).fetchall()]
+    return {**info,'pix_chave':os.environ.get('PIX_KEY',''),'pix_titular':os.environ.get('PIX_HOLDER',''),'whatsapp':os.environ.get('BILLING_WHATSAPP',''),'pagamentos':payments}
+
+@app.get('/api/gestao/barbearias')
+def gestao(request: Request):
+    with banco() as db:
+        administrador(request,db)
+        rows=db.execute('SELECT lojas.*,usuarios.email FROM lojas JOIN usuarios ON usuarios.loja_id=lojas.id ORDER BY lojas.slug').fetchall()
+        return [{'id':r['id'],'slug':r['slug'],'nome':json.loads(r['configuracao'])['nome'],'email':r['email'],**assinatura(db,r['id'])} for r in rows]
+
+class ConfirmacaoPix(BaseModel):
+    referencia: str = Field(min_length=6,max_length=100)
+
+@app.post('/api/gestao/barbearias/{shop_id}/pagamentos',status_code=201)
+def confirmar_pix(shop_id: str,data: ConfirmacaoPix,request: Request):
+    reference=data.referencia.strip().upper()
+    if len(reference)<6: raise HTTPException(422,'Informe o identificador do Pix conferido no banco.')
+    now=datetime.now(BRASIL)
+    with banco() as db:
+        user=administrador(request,db,True)
+        if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821602,))
+        else: db.execute('BEGIN IMMEDIATE')
+        if not db.execute('SELECT id FROM usuarios WHERE loja_id=?',(shop_id,)).fetchone(): raise HTTPException(404,'Barbearia não encontrada.')
+        if db.execute('SELECT id FROM pagamentos WHERE referencia=?',(reference,)).fetchone(): raise HTTPException(409,'Este Pix já foi confirmado. Nenhum mês foi acrescentado.')
+        previous=assinatura(db,shop_id)['vencimento']
+        start=max(now,datetime.fromisoformat(previous)) if previous else now
+        month=start.month%12+1
+        year=start.year+(start.month==12)
+        due=start.replace(year=year,month=month,day=min(start.day,calendar.monthrange(year,month)[1])).isoformat(timespec='seconds')
+        db.execute('INSERT INTO pagamentos(id,loja_id,referencia,valor_centavos,confirmado_por,confirmado_em,vencimento) VALUES(?,?,?,?,?,?,?)',(secrets.token_hex(16),shop_id,reference,9000,user['id'],now.isoformat(timespec='seconds'),due))
+        db.execute('INSERT INTO assinaturas(loja_id,vencimento) VALUES(?,?) ON CONFLICT(loja_id) DO UPDATE SET vencimento=excluded.vencimento',(shop_id,due))
+    return {'vencimento':due,'valor':90}
 
 class Barbeiro(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,50}$')
@@ -251,8 +315,10 @@ def loja_publica(db,slug):
 
 @app.get('/api/publico/{slug}/configuracao')
 def publico(slug: str):
-    with banco() as db: shop,config=loja_publica(db,slug)
-    return {k:v for k,v in config.items() if k!='comissao'}
+    with banco() as db:
+        shop,config=loja_publica(db,slug)
+        active=assinatura(db,shop['id'])['ativa']
+    return {**{k:v for k,v in config.items() if k!='comissao'},'agenda_liberada':active}
 
 def escolher(config,barber_id,service_id):
     barber=next((b for b in config['barbeiros'] if b['id']==barber_id),None)
@@ -286,6 +352,7 @@ def ocupado(db,shop_id,barber_id,start,duration,ignore=0):
 def disponibilidade(slug: str,data: date,barbeiro_id: str,servico_id: str):
     with banco() as db:
         shop,config=loja_publica(db,slug)
+        exigir_assinatura(db,shop['id'])
         barber,service=escolher(config,barbeiro_id,servico_id)
         hours=[]
         for p in config['periodos']:
@@ -323,6 +390,7 @@ def criar(slug: str,data: Reserva,request: Request):
         if not DATABASE_URL: db.execute('BEGIN IMMEDIATE')
         shop,config=loja_publica(db,slug)
         if shop['id']=='demo': raise HTTPException(400,'Esta é uma demonstração. Crie uma conta para abrir sua própria agenda.')
+        exigir_assinatura(db,shop['id'])
         barber,service=escolher(config,data.barbeiro_id,data.servico_id)
         if DATABASE_URL: travar(db,shop['id'],barber['id'])
         start=inicio_valido(config,data.data,data.horario,service['duracao'])
@@ -368,6 +436,7 @@ def health():
 def head(): return None
 
 @app.get('/',response_class=HTMLResponse)
+@app.get('/gestao',response_class=HTMLResponse)
 @app.get('/painel',response_class=HTMLResponse)
 @app.get('/entrar',response_class=HTMLResponse)
 @app.get('/cadastro',response_class=HTMLResponse)
