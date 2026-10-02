@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert public.get('/api/agendamentos').status_code==401
     assert public.get('/api/configuracao').status_code==401
     for client,email,slug in [(a,'dono-a@example.com','loja-a'),(b,'dono-b@example.com','loja-b')]:
-        r=client.post('/api/cadastro',json={'nome':slug,'slug':slug,'email':email,'senha':'SenhaTeste!12345'})
+        r=client.post('/api/cadastro',json={'aceite_termos':True,'nome':slug,'slug':slug,'email':email,'senha':'SenhaTeste!12345'})
         assert r.status_code==201,r.text
         assert 'httponly' in r.headers['set-cookie'].lower()
     ah={'X-CSRF-Token':a.get('/api/sessao').json()['csrf']}

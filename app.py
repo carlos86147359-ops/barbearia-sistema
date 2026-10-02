@@ -14,7 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -158,6 +158,7 @@ class Acesso(BaseModel):
 class Cadastro(Acesso):
     nome: str = Field(min_length=2,max_length=100)
     slug: str = Field(min_length=3,max_length=50)
+    aceite_termos: bool = False
 
 def email_valido(email):
     email=email.strip().lower()
@@ -165,7 +166,8 @@ def email_valido(email):
     return email
 
 @app.post('/api/cadastro',status_code=201)
-def cadastrar(data: Cadastro, request: Request, response: Response):
+def cadastrar(data: Cadastro, request: Request, response: Response, background: BackgroundTasks):
+    if not data.aceite_termos: raise HTTPException(422,'Leia e aceite os termos de uso e a política de privacidade para criar a conta.')
     limitar(request,'cadastro',10,3600)
     email=email_valido(data.email)
     if eh_admin({'email':email}):
@@ -182,7 +184,9 @@ def cadastrar(data: Cadastro, request: Request, response: Response):
         if db.execute('SELECT id FROM lojas WHERE slug=?',(slug,)).fetchone(): raise HTTPException(409,'Esse endereço já está em uso. Escolha outro.')
         db.execute('INSERT INTO lojas(id,slug,configuracao) VALUES(?,?,?)',(shop_id,slug,json.dumps(config)))
         db.execute('INSERT INTO usuarios(id,loja_id,email,senha) VALUES(?,?,?,?)',(user_id,shop_id,email,hash_senha(data.senha)))
+        registrar_aceite(db,user_id)
         csrf=abrir_sessao(db,user_id,response)
+    if email_pronto(): background.add_task(enviar_acao_email,user_id,email,'verificar')
     return {'csrf':csrf,'slug':slug}
 
 @app.post('/api/login')
@@ -204,7 +208,7 @@ def sessao(request: Request):
     with banco() as db:
         user=usuario(request,db)
         shop=db.execute('SELECT slug FROM lojas WHERE id=?',(user['loja_id'],)).fetchone()
-    return {'email':user['email'],'csrf':user['csrf'],'slug':shop['slug'],'administrador':eh_admin(user),'papel':user['papel'],'barbeiro_id':user['barbeiro_id']}
+    return {'email':user['email'],'csrf':user['csrf'],'slug':shop['slug'],'administrador':eh_admin(user),'papel':user['papel'],'barbeiro_id':user['barbeiro_id'],'email_confirmado':email_confirmado(user['id']),'email_disponivel':email_pronto()}
 
 @app.post('/api/logout')
 def logout(request: Request,response: Response):
@@ -470,7 +474,7 @@ def inicio_valido(config,day,hour,duration):
 def ocupado(db,shop_id,barber_id,start,duration,ignore=0):
     end=start+timedelta(minutes=duration)
     rows=db.execute("SELECT inicio,duracao_minutos FROM agendamentos WHERE loja_id=? AND barbeiro_id=? AND status!='cancelado' AND inicio LIKE ? AND id!=?",(shop_id,barber_id,start.date().isoformat()+'%',ignore))
-    return any(start<datetime.fromisoformat(r['inicio'])+timedelta(minutes=r['duracao_minutos']) and datetime.fromisoformat(r['inicio'])<end for r in rows)
+    return bloqueado(db,shop_id,barber_id,start,end) or any(start<datetime.fromisoformat(r['inicio'])+timedelta(minutes=r['duracao_minutos']) and datetime.fromisoformat(r['inicio'])<end for r in rows)
 
 @app.get('/api/publico/{slug}/disponibilidade')
 def disponibilidade(slug: str,data: date,barbeiro_id: str,servico_id: str):
@@ -499,7 +503,7 @@ class Reserva(BaseModel):
     horario: str
 
 def travar(db,shop_id,barber_id):
-    if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(hashtext(?))',(shop_id+':'+barber_id,))
+    if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(hashtext(?))',('agenda:'+shop_id,))
     else: db.execute('BEGIN IMMEDIATE')
 
 @app.post('/api/publico/{slug}/agendamentos',status_code=201)
@@ -524,11 +528,12 @@ def criar(slug: str,data: Reserva,request: Request):
         if DATABASE_URL: sql+=' RETURNING id'
         cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} às {data.horario}',float(service['preco']),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
         reservation_id=cur.fetchone()['id'] if DATABASE_URL else cur.lastrowid
+        management=criar_link_cliente(db,reservation_id)
     message=f"Olá! Agendei {service['nome']} com {barber['nome']} em {config['nome']}, para {data.data} às {data.horario}. Meu nome é {name}. Reserva #{reservation_id}."
     professional_phone=barber.get('whatsapp','')
     store_phone=professional_phone or config['whatsapp']
     if len(store_phone) in (10,11): store_phone='55'+store_phone
-    return {'agendamento_id':reservation_id,'preco':service['preco'],'whatsapp_destinatario':'barbeiro' if professional_phone else 'loja' if store_phone else None,'link_whatsapp':f'https://wa.me/{store_phone}?text={quote(message)}' if store_phone else None}
+    return {'agendamento_id':reservation_id,'preco':service['preco'],'link_gerenciar':management,'whatsapp_destinatario':'barbeiro' if professional_phone else 'loja' if store_phone else None,'link_whatsapp':f'https://wa.me/{store_phone}?text={quote(message)}' if store_phone else None}
 
 @app.get('/api/agendamentos')
 def agenda(request: Request):
@@ -550,7 +555,10 @@ def alterar(reservation_id: int,data: Situacao,request: Request):
         row=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(reservation_id,user['loja_id'])).fetchone()
         if not row or (user['papel']=='barbeiro' and row['barbeiro_id']!=user['barbeiro_id']): raise HTTPException(404,'Agendamento não encontrado.')
         if user['papel']=='barbeiro' and (data.status!='concluido' or row['status']!='agendado'): raise HTTPException(403,'Você pode concluir seus atendimentos agendados. Peça ao dono para cancelar ou reabrir.')
-        if DATABASE_URL: travar(db,user['loja_id'],row['barbeiro_id'])
+        if DATABASE_URL:
+            travar(db,user['loja_id'],row['barbeiro_id'])
+            row=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(reservation_id,user['loja_id'])).fetchone()
+            if user['papel']=='barbeiro' and row['status']!='agendado': raise HTTPException(409,'A situação deste atendimento mudou. Atualize sua agenda.')
         if row['status']=='cancelado' and data.status!='cancelado' and ocupado(db,user['loja_id'],row['barbeiro_id'],datetime.fromisoformat(row['inicio']),row['duracao_minutos'],reservation_id): raise HTTPException(409,'Esse horário já foi ocupado por outra reserva.')
         db.execute('UPDATE agendamentos SET status=? WHERE id=? AND loja_id=?',(data.status,reservation_id,user['loja_id']))
     return {'status':data.status}
@@ -564,6 +572,13 @@ def health():
 def head(): return None
 
 @app.get('/',response_class=HTMLResponse)
+@app.get('/recuperar-senha',response_class=HTMLResponse)
+@app.get('/redefinir-senha',response_class=HTMLResponse)
+@app.get('/confirmar-email',response_class=HTMLResponse)
+@app.get('/minha-reserva',response_class=HTMLResponse)
+@app.get('/termos',response_class=HTMLResponse)
+@app.get('/privacidade',response_class=HTMLResponse)
+@app.get('/suporte',response_class=HTMLResponse)
 @app.get('/convite',response_class=HTMLResponse)
 @app.get('/gestao',response_class=HTMLResponse)
 @app.get('/painel',response_class=HTMLResponse)
@@ -573,3 +588,10 @@ def head(): return None
 @app.get('/barbeiro',response_class=HTMLResponse)
 @app.get('/b/{slug}',response_class=HTMLResponse)
 def pagina(): return (ROOT/'index.html').read_text(encoding='utf-8')
+
+# Os recursos adicionais usam as mesmas sessões e transações do núcleo.
+import importlib.util as _importlib
+_spec=_importlib.spec_from_file_location("recursos_barber",ROOT / "recursos.py")
+_recursos=_importlib.module_from_spec(_spec)
+_spec.loader.exec_module(_recursos)
+_recursos.instalar(app,globals())
