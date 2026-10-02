@@ -600,9 +600,13 @@ def head(): return None
 @app.get('/b/{slug}',response_class=HTMLResponse)
 def pagina(): return (ROOT/'index.html').read_text(encoding='utf-8')
 
+from pwa import instalar as instalar_pwa
+instalar_pwa(app, ROOT)
+
 # Os recursos adicionais usam as mesmas sessões e transações do núcleo.
 import importlib.util as _importlib
 _spec=_importlib.spec_from_file_location("recursos_barber",ROOT / "recursos.py")
 _recursos=_importlib.module_from_spec(_spec)
 _spec.loader.exec_module(_recursos)
 _recursos.instalar(app,globals())
+
