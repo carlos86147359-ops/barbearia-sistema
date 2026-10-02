@@ -1,10 +1,10 @@
-name: Validar recuperacao de backup
+name: Validar sistema e recuperacao de backup
 on:
   push:
     branches: [main, codex/backup-diario]
-    paths: ['app.py', 'backup_nuvem.py', 'restaurar_backup.py', 'recursos.py', 'tests/test_backup*.py', 'tests/test_cortesia.py', 'backup-publica.pem', '.github/workflows/backup*.yml']
+    paths: ['*.py', '*.html', '*.js', '*.webmanifest', 'requirements*.txt', 'tests/**', 'backup-publica.pem', '.github/workflows/backup*.yml']
   pull_request:
-    paths: ['app.py', 'backup_nuvem.py', 'restaurar_backup.py', 'recursos.py', 'tests/test_backup*.py', 'tests/test_cortesia.py', 'backup-publica.pem', '.github/workflows/backup*.yml']
+    paths: ['*.py', '*.html', '*.js', '*.webmanifest', 'requirements*.txt', 'tests/**', 'backup-publica.pem', '.github/workflows/backup*.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,9 +32,17 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt -r requirements-backup.txt httpx
-      - run: PYTHONPATH=. python tests/test_backup_nuvem.py
-      - run: PYTHONPATH=. python tests/test_cortesia.py
+      - name: Testar os fluxos do sistema com bancos temporarios
+        run: |
+          for test in tests/test_*.py; do
+            if [ "$test" != "tests/test_backup_postgres.py" ]; then
+              PYTHONPATH=. python "$test" || exit 1
+            fi
+          done
+      - name: Testar acesso e instalacao no celular
+        run: node tests/test_frontend.cjs
       - name: Restaurar dados ficticios no PostgreSQL
         env:
           BACKUP_TEST_DATABASE_URL: postgresql://postgres:ensaio-local-descartavel@localhost:5432/ensaio_backup
         run: PYTHONPATH=. python tests/test_backup_postgres.py
+

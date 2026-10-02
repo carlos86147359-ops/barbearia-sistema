@@ -420,8 +420,10 @@ def salvar_config(data: Configuracao,request: Request):
             raise HTTPException(422,f"Informe o WhatsApp de {barber['nome']} com DDD ou deixe em branco.")
         barber['whatsapp']=number
     config['nome']=config['nome'].strip()
-    config['whatsapp']=re.sub(r'\D','',config['whatsapp'])
-    if len(config['nome'])<2 or (config['whatsapp'] and len(config['whatsapp']) not in (10,11,12,13)):
+    raw_store_phone=config['whatsapp'].strip()
+    config['whatsapp']=re.sub(r'\D','',raw_store_phone)
+    store_phone=config['whatsapp']
+    if len(config['nome'])<2 or (raw_store_phone and not (len(store_phone) in (10,11) or (store_phone.startswith('55') and len(store_phone) in (12,13)))):
         raise HTTPException(422,'Confira o nome da barbearia e o WhatsApp com DDD.')
     if not config['dias'] or any(d not in range(7) for d in config['dias']) or len(set(config['dias'])) != len(config['dias']): raise HTTPException(422,'Escolha os dias de funcionamento.')
     for kind in ('barbeiros','servicos'):

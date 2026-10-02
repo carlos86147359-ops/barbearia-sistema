@@ -29,9 +29,16 @@ with tempfile.TemporaryDirectory() as tmp:
     assert owner.put('/api/configuracao',headers=h,json=config).status_code==200
     r=public.post('/api/publico/loja-teste/agendamentos',json={**payload,'barbeiro_id':'sem-numero','horario':'10:00'})
     assert r.status_code==201 and r.json()['link_whatsapp'] is None
+    for invalid in ('abc','123','4411999990000','441199999000'):
+        config['whatsapp']=invalid
+        assert owner.put('/api/configuracao',headers=h,json=config).status_code==422
+    assert owner.get('/api/configuracao').json()['whatsapp']==''
+    config['whatsapp']='+55 (11) 99999-0000'
+    assert owner.put('/api/configuracao',headers=h,json=config).json()['whatsapp']=='5511999990000'
     config['barbeiros'][0]['whatsapp']='123'
     assert owner.put('/api/configuracao',headers=h,json=config).status_code==422
     config['barbeiros'][0]['whatsapp']='abc'
     assert owner.put('/api/configuracao',headers=h,json=config).status_code==422
     assert owner.get('/api/configuracao').json()['barbeiros'][0]['whatsapp']=='61981332994'
     print('OK: WhatsApp individual, normalização com DDD/55, loja como alternativa, ausência de número, mensagem codificada e rejeição de números inválidos.')
+
