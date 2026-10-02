@@ -5,6 +5,7 @@ import os
 import secrets
 import time
 import urllib.request
+from email.utils import parseaddr
 from datetime import date, datetime, timedelta
 
 from fastapi import BackgroundTasks, HTTPException, Request, Response
@@ -66,7 +67,13 @@ def instalar(app,c):
         if c['DATABASE_URL']: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
         else: db.execute('BEGIN IMMEDIATE')
 
-    def email_pronto(): return bool(os.environ.get('RESEND_API_KEY') and os.environ.get('EMAIL_FROM') and os.environ.get('PUBLIC_BASE_URL'))
+    def email_provedor():
+        return os.environ.get('EMAIL_PROVIDER','brevo' if os.environ.get('BREVO_API_KEY') else 'resend').strip().lower()
+
+    def email_pronto():
+        provider=email_provedor()
+        key='BREVO_API_KEY' if provider=='brevo' else 'RESEND_API_KEY' if provider=='resend' else None
+        return bool(key and os.environ.get(key) and os.environ.get('EMAIL_FROM') and os.environ.get('PUBLIC_BASE_URL'))
 
     def conta(db,uid=None,email=None):
         column='id' if uid else 'email';value=uid or email
@@ -84,8 +91,14 @@ def instalar(app,c):
             return bool(row and db.execute('SELECT usuario_id FROM emails_confirmados WHERE usuario_id=? AND email=?',(uid,row['email'])).fetchone())
 
     def enviar_email(destino,subject,text,uid,acao):
-        payload={'from':os.environ['EMAIL_FROM'],'to':[destino],'subject':subject,'text':text}
-        req=urllib.request.Request('https://api.resend.com/emails',data=json.dumps(payload).encode(),headers={'Authorization':'Bearer '+os.environ['RESEND_API_KEY'],'Content-Type':'application/json','User-Agent':'BarberSaaS/2'})
+        if email_provedor()=='brevo':
+            name,address=parseaddr(os.environ['EMAIL_FROM'])
+            payload={'sender':{'name':name or 'Grupo Havo','email':address},'to':[{'email':destino}],'subject':subject,'textContent':text}
+            url='https://api.brevo.com/v3/smtp/email';authorization={'api-key':os.environ['BREVO_API_KEY']}
+        else:
+            payload={'from':os.environ['EMAIL_FROM'],'to':[destino],'subject':subject,'text':text}
+            url='https://api.resend.com/emails';authorization={'Authorization':'Bearer '+os.environ['RESEND_API_KEY']}
+        req=urllib.request.Request(url,data=json.dumps(payload).encode(),headers={**authorization,'Content-Type':'application/json','User-Agent':'BarberSaaS/2'})
         with urllib.request.urlopen(req,timeout=20) as response:
             if response.status not in (200,201,202): raise RuntimeError('Falha no envio de e-mail')
 

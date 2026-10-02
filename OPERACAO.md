@@ -11,12 +11,32 @@
 
 ## Ativar e-mails
 
+### Brevo: opção inicial sem domínio próprio
+
+1. Termine o cadastro da Brevo usando dados reais da organização e escolha o plano gratuito.
+2. Em **Configurações → Remetentes**, cadastre **Grupo Havo** e **grupohavo061@gmail.com** e confirme o código recebido no e-mail.
+3. Sem domínio próprio, a Brevo pode substituir o endereço de envio por um endereço técnico dela. É uma solução temporária: teste a entrega e o spam. [Explicação oficial](https://help.brevo.com/hc/en-us/articles/14925263522578-Comply-with-Gmail-Yahoo-and-Microsoft-s-requirements-for-email-senders).
+4. Gere uma chave **API** da Brevo. Não use a chave SMTP. Insira diretamente no Render, sem enviar pela conversa ou colocar no GitHub.
+5. Em **Render → barbearia-sistema → Environment**, configure:
+
+   | Nome | Valor |
+   |---|---|
+   | `EMAIL_PROVIDER` | `brevo` |
+   | `BREVO_API_KEY` | Sua chave API inserida por você |
+   | `EMAIL_FROM` | `Grupo Havo <grupohavo061@gmail.com>` |
+   | `PUBLIC_BASE_URL` | `https://barbearia-sistema-rj6p.onrender.com` |
+
+6. Salve e publique. Teste **Enviar confirmação** no painel da sua própria conta. Confira a entrega e os registros transacionais da Brevo antes de testar **Esqueci minha senha**. A integração usa HTTPS; não depende de conexões SMTP.
+7. O plano gratuito tem limite diário. [Limites atuais da Brevo](https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan). A conta pode exigir verificação/ativação do envio; a configuração das variáveis, sozinha, não prova a entrega.
+
+### Resend: alternativa para quando tiver domínio
+
 O site funciona sem este envio; até configurar, o usuário recebe uma informação clara e o contato do suporte. A verificação de e-mail ainda não bloqueia o login. Os testes simulam o provedor: não confirmam entrega real em caixas de entrada.
 
 1. Crie/accesse uma conta no [Resend](https://resend.com).
 2. Cadastre e verifique um domínio que você possui, seguindo os registros DNS apresentados pelo Resend. Para enviar a clientes reais, não use Gmail como endereço remetente. O Resend exige um domínio próprio verificado; se você ainda não tem domínio, a integração pode aguardar. [Documentação de domínios](https://resend.com/docs/dashboard/domains/introduction).
 3. Crie uma chave com permissão de envio, preferencialmente restrita ao domínio. [Documentação das chaves](https://resend.com/docs/dashboard/api-keys/introduction).
-4. No Render, abra o serviço **barbearia-sistema → Environment** e configure:
+4. No Render, abra o serviço **barbearia-sistema → Environment** e configure `EMAIL_PROVIDER=resend` e:
 
    | Nome | Valor |
    |---|---|
