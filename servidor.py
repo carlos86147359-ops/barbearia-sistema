@@ -72,6 +72,17 @@ def inicializar():
 inicializar()
 app = FastAPI(title='BarberSaaS', version='1.1.0')
 
+@app.head('/')
+@app.head('/api/agendamentos')
+def verificar_servidor():
+    return None
+
+@app.get('/health')
+def saude():
+    with conectar() as db:
+        db.execute('SELECT 1')
+    return {'status': 'ok', 'banco': 'postgresql' if DATABASE_URL else 'sqlite'}
+
 class Reserva(BaseModel):
     cliente_nome: str = Field(min_length=2, max_length=100)
     cliente_telefone: str = Field(min_length=10, max_length=25)
