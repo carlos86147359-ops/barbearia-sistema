@@ -10,7 +10,7 @@ with tempfile.TemporaryDirectory() as tmp:
     spec=importlib.util.spec_from_file_location('wa_app',Path(__file__).parents[1]/'app.py')
     m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     owner=TestClient(m.app);public=TestClient(m.app)
-    r=owner.post('/api/cadastro',json={'nome':'Loja Teste','slug':'loja-teste','email':'owner@example.com','senha':'SenhaTeste!12345'});assert r.status_code==201
+    r=owner.post('/api/cadastro',json={'aceite_termos':True,'nome':'Loja Teste','slug':'loja-teste','email':'owner@example.com','senha':'SenhaTeste!12345'});assert r.status_code==201
     h={'X-CSRF-Token':r.json()['csrf']}
     config={'nome':'Loja Teste','whatsapp':'11999990000','comissao':40,'barbeiros':[{'id':'joao','nome':'João','whatsapp':'(61) 98133-2994'},{'id':'maria','nome':'Maria','whatsapp':'+55 21 99888-0000'},{'id':'sem-numero','nome':'Sem número'}],'servicos':[{'id':'corte','nome':'Corte','preco':45,'duracao':30}],'dias':list(range(7)),'periodos':[{'inicio':'09:00','fim':'19:00'}],'intervalo':30}
     saved=owner.put('/api/configuracao',headers=h,json=config);assert saved.status_code==200,saved.text

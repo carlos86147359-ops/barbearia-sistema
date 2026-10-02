@@ -17,12 +17,12 @@ with tempfile.TemporaryDirectory() as tmp:
     spec.loader.exec_module(m)
     admin=TestClient(m.app); owner=TestClient(m.app); public=TestClient(m.app)
     def register(c,email,slug):
-        r=c.post('/api/cadastro',json={'nome':slug,'slug':slug,'email':email,'senha':'SenhaTeste!12345'})
+        r=c.post('/api/cadastro',json={'aceite_termos':True,'nome':slug,'slug':slug,'email':email,'senha':'SenhaTeste!12345'})
         assert r.status_code==201,r.text
         return {'X-CSRF-Token':r.json()['csrf']}
     ah=register(admin,'admin@example.com','admin-shop')
     os.environ['ADMIN_EMAILS']='admin@example.com'
-    assert public.post('/api/cadastro',json={'nome':'Falso','slug':'falso-admin','email':'admin@example.com','senha':'SenhaTeste!12345'}).status_code==409
+    assert public.post('/api/cadastro',json={'aceite_termos':True,'nome':'Falso','slug':'falso-admin','email':'admin@example.com','senha':'SenhaTeste!12345'}).status_code==409
     oh=register(owner,'owner@example.com','owner-shop')
     assert public.get('/api/gestao/barbearias').status_code==401
     assert owner.get('/api/gestao/barbearias').status_code==403

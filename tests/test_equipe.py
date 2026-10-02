@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory() as tmp:
     m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     owner=TestClient(m.app);other=TestClient(m.app);staff=TestClient(m.app);public=TestClient(m.app)
     def register(c,email,slug):
-        r=c.post('/api/cadastro',json={'email':email,'senha':'SenhaTeste!12345','nome':slug,'slug':slug});assert r.status_code==201,r.text
+        r=c.post('/api/cadastro',json={'aceite_termos':True,'email':email,'senha':'SenhaTeste!12345','nome':slug,'slug':slug});assert r.status_code==201,r.text
         return {'X-CSRF-Token':r.json()['csrf']}
     oh=register(owner,'owner@example.com','loja-a');xh=register(other,'other@example.com','loja-b')
     config={'nome':'Loja','whatsapp':'','comissao':40,'barbeiros':[{'id':'joao','nome':'João'},{'id':'maria','nome':'Maria'}],'servicos':[{'id':'corte','nome':'Corte','preco':45,'duracao':30}],'dias':list(range(7)),'periodos':[{'inicio':'09:00','fim':'19:00'}],'intervalo':30}
