@@ -1,0 +1,53 @@
+name: Backup diario criptografado
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: backup-barbersaas
+  cancel-in-progress: false
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: ensaio-local-descartavel
+          POSTGRES_DB: ensaio_backup
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt -r requirements-backup.txt
+      - name: Testar criptografia
+        run: PYTHONPATH=. python tests/test_backup_nuvem.py
+      - name: Gerar copia e testar restauracao
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_TEST_DATABASE_URL: postgresql://postgres:ensaio-local-descartavel@localhost:5432/ensaio_backup
+        run: python backup_nuvem.py executar
+      - name: Guardar somente arquivos criptografados
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backup-barbersaas-${{ github.run_id }}
+          path: backup-cifrado/*.cifrado.json*
+          retention-days: 30
+          if-no-files-found: error
+      - name: Limpar arquivos do executor
+        if: always()
+        run: rm -rf backup-cifrado

@@ -52,7 +52,7 @@ Links de recuperação valem 20 minutos; de confirmação, 24 horas. Um novo env
 
 ## Cópias e recuperação
 
-As cópias desta entrega são **manuais**. Nenhuma rotina automática ou armazenamento externo de cópias foi ativado. Gere uma cópia regularmente e antes de mudanças importantes. Guarde o arquivo JSON em local privado, protegido e separado do computador principal. Não publique cópias no GitHub: contêm nomes, telefones, reservas, pagamentos e hashes das senhas.
+O download no painel é **manual**. A rotina diária criptografada do GitHub está descrita em **BACKUP.md** e depende de configurar `BACKUP_DATABASE_URL` e confirmar a primeira execução bem-sucedida; publicar o workflow não confirma sua ativação. Ela guarda somente arquivos criptografados por 30 dias e ensaia a restauração em PostgreSQL temporário. Guarde a chave privada separadamente. Nunca publique JSON aberto no GitHub: contém nomes, telefones, reservas, pagamentos e hashes das senhas.
 
 1. Entre em **/gestao** com a conta administradora, procure **Cópia de segurança**, informe sua senha atual e baixe o arquivo. Confira que ele foi salvo. Depois clique em **Baixar verificação da cópia** e guarde também o arquivo `.sha256` junto do JSON.
 2. A cópia preserva lojas, contas, equipe, assinaturas, pagamentos, reservas, bloqueios, confirmações de e-mail, aceites e hashes dos links dos clientes. Não inclui chaves do Render/Neon/Resend, sessões, convites ou links temporários de recuperação.
@@ -79,7 +79,7 @@ As cópias desta entrega são **manuais**. Nenhuma rotina automática ou armazen
 6. Rode a aplicação separadamente contra o banco recuperado. Verifique contagens, login, configurações, reservas e histórico. Senhas são preservadas; sessões e convites temporários não são recuperados. Links privados de reservas existentes continuam válidos se você ainda possui os links originais.
 7. Somente depois de conferir a recuperação, altere `DATABASE_URL` no Render para o banco recuperado e publique. Preserve o banco anterior até confirmar o resultado. Reservas feitas depois do momento da cópia precisam ser conciliadas: não estarão no arquivo antigo.
 
-O ensaio desta entrega foi feito com dados fictícios em SQLite e confirmou login e criação de novas reservas depois da restauração. A recuperação PostgreSQL real deve ser ensaiada no banco separado antes de qualquer troca em produção.
+O ensaio com dados fictícios em SQLite confirmou login e criação de novas reservas depois da restauração. Em 2 de outubro de 2026, um snapshot nativo do Neon foi restaurado em branch separada e suas tabelas foram consultadas, sem trocar o banco do Render. Esse ensaio nativo não valida sozinho a recuperação do JSON: a validação automática do GitHub restaura dados fictícios em PostgreSQL e verifica login e novas reservas; cada backup real também é restaurado em PostgreSQL temporário antes de publicar o arquivo criptografado. Confira os resultados das execuções antes de qualquer troca em produção.
 
 ## Termos e privacidade
 
