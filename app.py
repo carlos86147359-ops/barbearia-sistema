@@ -363,11 +363,14 @@ def meu_perfil(request: Request):
         barber=next((b for b in config['barbeiros'] if b['id']==user['barbeiro_id']),None)
         return {'barbearia':config['nome'],'profissional':barber['nome'] if barber else '', 'agenda_liberada':assinatura(db,user['loja_id'])['ativa']}
 
-class Barbeiro(BaseModel):
+class Identificado(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,50}$')
     nome: str = Field(min_length=2,max_length=100)
 
-class Servico(Barbeiro):
+class Barbeiro(Identificado):
+    whatsapp: str = Field(default='',max_length=25)
+
+class Servico(Identificado):
     preco: Decimal = Field(gt=0,le=10000,max_digits=7,decimal_places=2)
     duracao: int = Field(ge=5,le=480)
 
@@ -395,6 +398,12 @@ def ler_config(request: Request):
 @app.put('/api/configuracao')
 def salvar_config(data: Configuracao,request: Request):
     config=json.loads(data.model_dump_json())
+    for barber in config['barbeiros']:
+        raw=barber['whatsapp'].strip()
+        number=re.sub(r'\D','',raw)
+        if raw and not (len(number) in (10,11) or (number.startswith('55') and len(number) in (12,13))):
+            raise HTTPException(422,f"Informe o WhatsApp de {barber['nome']} com DDD ou deixe em branco.")
+        barber['whatsapp']=number
     config['nome']=config['nome'].strip()
     config['whatsapp']=re.sub(r'\D','',config['whatsapp'])
     if len(config['nome'])<2 or (config['whatsapp'] and len(config['whatsapp']) not in (10,11,12,13)):
@@ -516,9 +525,10 @@ def criar(slug: str,data: Reserva,request: Request):
         cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} às {data.horario}',float(service['preco']),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
         reservation_id=cur.fetchone()['id'] if DATABASE_URL else cur.lastrowid
     message=f"Olá! Agendei {service['nome']} com {barber['nome']} em {config['nome']}, para {data.data} às {data.horario}. Meu nome é {name}. Reserva #{reservation_id}."
-    store_phone=config['whatsapp']
+    professional_phone=barber.get('whatsapp','')
+    store_phone=professional_phone or config['whatsapp']
     if len(store_phone) in (10,11): store_phone='55'+store_phone
-    return {'agendamento_id':reservation_id,'preco':service['preco'],'link_whatsapp':f'https://wa.me/{store_phone}?text={quote(message)}' if store_phone else None}
+    return {'agendamento_id':reservation_id,'preco':service['preco'],'whatsapp_destinatario':'barbeiro' if professional_phone else 'loja' if store_phone else None,'link_whatsapp':f'https://wa.me/{store_phone}?text={quote(message)}' if store_phone else None}
 
 @app.get('/api/agendamentos')
 def agenda(request: Request):
