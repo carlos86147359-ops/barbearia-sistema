@@ -6,6 +6,7 @@
 - Folgas, férias e feriados por profissional ou para toda a barbearia, em **Painel → Folgas e bloqueios**. O período final é exclusivo: um bloqueio até 12h permite começar às 12h. Reservas existentes precisam ser resolvidas antes de bloquear.
 - Link privado para o cliente cancelar ou mudar uma reserva futura. Ele aparece após reservar. O dono pode gerar outro em **Agenda → Link para o cliente**; um novo link invalida o anterior.
 - Histórico dos Pix confirmados, em **Gerenciar assinaturas**. A mensalidade segue R$ 90, com conferência manual no banco.
+- Cortesia sem vencimento para a própria barbearia do administrador, em **Painel → Liberar minha conta como cortesia**. Exige sessão administrativa e CSRF, registra responsável, data e motivo, sem criar pagamento. A liberação entra no backup; cópias antigas sem cortesias continuam aceitas na restauração.
 - Download de cópia completa no painel administrativo, com confirmação da senha atual, e ferramenta de restauração em banco novo.
 - Páginas **/termos**, **/privacidade** e **/suporte**. Novos cadastros registram versão e momento do aceite. Contas anteriores não recebem um aceite fictício.
 

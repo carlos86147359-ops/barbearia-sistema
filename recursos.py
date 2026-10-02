@@ -17,6 +17,7 @@ TABLES={
     'usuarios':['id','loja_id','email','senha'],
     'funcionarios':['id','loja_id','barbeiro_id','email','senha','ativo'],
     'assinaturas':['loja_id','vencimento'],
+    'cortesias':['loja_id','administrador_id','criado_em','motivo'],
     'pagamentos':['id','loja_id','referencia','valor_centavos','confirmado_por','confirmado_em','vencimento'],
     'agendamentos':['id','cliente_nome','cliente_telefone','barbeiro_nome','servico_nome','data_hora','preco','criado_em','status','inicio','duracao_minutos','loja_id','barbeiro_id','servico_id','comissao_pct'],
     'bloqueios':['id','loja_id','barbeiro_id','inicio','fim','motivo'],
