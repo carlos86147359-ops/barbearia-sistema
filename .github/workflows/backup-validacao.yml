@@ -2,9 +2,9 @@ name: Validar recuperacao de backup
 on:
   push:
     branches: [main, codex/backup-diario]
-    paths: ['backup_nuvem.py', 'restaurar_backup.py', 'recursos.py', 'tests/test_backup*.py', 'backup-publica.pem', '.github/workflows/backup*.yml']
+    paths: ['app.py', 'backup_nuvem.py', 'restaurar_backup.py', 'recursos.py', 'tests/test_backup*.py', 'tests/test_cortesia.py', 'backup-publica.pem', '.github/workflows/backup*.yml']
   pull_request:
-    paths: ['backup_nuvem.py', 'restaurar_backup.py', 'recursos.py', 'tests/test_backup*.py', 'backup-publica.pem', '.github/workflows/backup*.yml']
+    paths: ['app.py', 'backup_nuvem.py', 'restaurar_backup.py', 'recursos.py', 'tests/test_backup*.py', 'tests/test_cortesia.py', 'backup-publica.pem', '.github/workflows/backup*.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -33,6 +33,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt -r requirements-backup.txt httpx
       - run: PYTHONPATH=. python tests/test_backup_nuvem.py
+      - run: PYTHONPATH=. python tests/test_cortesia.py
       - name: Restaurar dados ficticios no PostgreSQL
         env:
           BACKUP_TEST_DATABASE_URL: postgresql://postgres:ensaio-local-descartavel@localhost:5432/ensaio_backup

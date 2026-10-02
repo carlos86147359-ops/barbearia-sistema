@@ -19,6 +19,8 @@ with tempfile.TemporaryDirectory() as tmp:
     password='SenhaFicticiaTeste!123'
     assert cli.post('/api/cadastro',json={'aceite_termos':True,'email':'ensaio@example.com','senha':password,'nome':'Ensaio','slug':'ensaio'}).status_code==201
     headers={'X-CSRF-Token':cli.get('/api/sessao').json()['csrf']}
+    os.environ['ADMIN_EMAILS']='ensaio@example.com'
+    assert cli.post('/api/gestao/minha-cortesia',headers=headers).status_code==200
     cfg={'nome':'Ensaio','whatsapp':'11900000000','comissao':40,'barbeiros':[{'id':'p','nome':'Fictício'}],'servicos':[{'id':'c','nome':'Corte teste','preco':45,'duracao':30}],'dias':list(range(7)),'periodos':[{'inicio':'09:00','fim':'19:00'}],'intervalo':30}
     assert cli.put('/api/configuracao',json=cfg,headers=headers).status_code==200
     day=(datetime.now(source.BRASIL)+timedelta(days=2)).date().isoformat()
@@ -33,6 +35,7 @@ with tempfile.TemporaryDirectory() as tmp:
     os.environ['DATABASE_URL']=dsn
     recovered=load(ROOT/'app.py','recovered_postgres');client=TestClient(recovered.app)
     assert client.post('/api/login',json={'email':'ensaio@example.com','senha':password}).status_code==200
+    assert client.get('/api/assinatura').json()['status']=='cortesia'
     assert len(client.get('/api/agendamentos').json())==1
     new=client.post('/api/publico/ensaio/agendamentos',json={**payload,'horario':'10:00'})
     assert new.status_code==201,new.text

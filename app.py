@@ -59,6 +59,7 @@ def iniciar():
         db.execute('CREATE TABLE IF NOT EXISTS sessoes (token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, csrf TEXT NOT NULL, expira BIGINT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS limites (chave TEXT PRIMARY KEY, janela BIGINT NOT NULL, quantidade INTEGER NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS assinaturas (loja_id TEXT PRIMARY KEY, vencimento TEXT)')
+        db.execute('CREATE TABLE IF NOT EXISTS cortesias (loja_id TEXT PRIMARY KEY, administrador_id TEXT NOT NULL, criado_em TEXT NOT NULL, motivo TEXT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS pagamentos (id TEXT PRIMARY KEY, loja_id TEXT NOT NULL, referencia TEXT UNIQUE NOT NULL, valor_centavos INTEGER NOT NULL, confirmado_por TEXT NOT NULL, confirmado_em TEXT NOT NULL, vencimento TEXT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS funcionarios (id TEXT PRIMARY KEY, loja_id TEXT NOT NULL, barbeiro_id TEXT NOT NULL, email TEXT UNIQUE NOT NULL, senha TEXT NOT NULL, ativo INTEGER NOT NULL DEFAULT 1, UNIQUE(loja_id,barbeiro_id))')
         db.execute('CREATE TABLE IF NOT EXISTS convites (token TEXT PRIMARY KEY, loja_id TEXT NOT NULL, barbeiro_id TEXT NOT NULL, email TEXT NOT NULL, expira BIGINT NOT NULL)')
@@ -231,6 +232,9 @@ def administrador(request,db,change=False):
 def cobranca_ativa(): return os.environ.get('BILLING_ENABLED','').lower()=='true'
 
 def assinatura(db,shop_id):
+    courtesy=db.execute('SELECT criado_em,motivo FROM cortesias WHERE loja_id=?',(shop_id,)).fetchone()
+    if courtesy:
+        return {'ativa':True,'status':'cortesia','vencimento':None,'valor':0,'cobranca_ativa':cobranca_ativa(),'cortesia':True,'motivo':courtesy['motivo']}
     row=db.execute('SELECT vencimento FROM assinaturas WHERE loja_id=?',(shop_id,)).fetchone()
     due=row['vencimento'] if row else None
     active=bool(due and datetime.fromisoformat(due)>datetime.now(BRASIL))
@@ -238,6 +242,13 @@ def assinatura(db,shop_id):
 
 def exigir_assinatura(db,shop_id):
     if not assinatura(db,shop_id)['ativa']: raise HTTPException(403,'Esta agenda está temporariamente indisponível. Fale com a barbearia.')
+
+@app.post('/api/gestao/minha-cortesia')
+def minha_cortesia(request: Request):
+    with banco() as db:
+        user=administrador(request,db,True)
+        db.execute('INSERT INTO cortesias(loja_id,administrador_id,criado_em,motivo) VALUES(?,?,?,?) ON CONFLICT(loja_id) DO NOTHING',(user['loja_id'],user['id'],datetime.now(BRASIL).isoformat(timespec='seconds'),'Conta do proprietário do SaaS'))
+        return assinatura(db,user['loja_id'])
 
 @app.get('/api/assinatura')
 def minha_assinatura(request: Request):

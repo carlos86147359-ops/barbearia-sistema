@@ -19,15 +19,17 @@ def ler(path,checksum=None):
     raw=Path(path).read_bytes()
     if checksum and hashlib.sha256(raw).hexdigest()!=checksum.strip().lower(): raise ValueError('A soma de verificação não confere.')
     data=json.loads(raw)
-    if data.get('formato')!='barbersaas-backup' or data.get('versao')!=1 or set(data.get('tabelas',{}))!=set(TABLES): raise ValueError('Formato de cópia não reconhecido.')
+    keys=set(data.get('tabelas',{}))
+    if data.get('formato')!='barbersaas-backup' or data.get('versao')!=1 or keys not in (set(TABLES),set(TABLES)-{'cortesias'}): raise ValueError('Formato de cópia não reconhecido.')
     tables=data['tabelas']
+    tables.setdefault('cortesias',[])
     for table,columns in TABLES.items():
         if not isinstance(tables[table],list): raise ValueError('Tabela inválida: '+table)
         for row in tables[table]:
             if not isinstance(row,dict) or set(row)!=set(columns): raise ValueError('Colunas inválidas: '+table)
             if any(not isinstance(v,(str,int,float,type(None))) for v in row.values()): raise ValueError('Valor inválido: '+table)
     shops={r['id'] for r in tables['lojas']};users={r['id'] for r in tables['usuarios']}|{r['id'] for r in tables['funcionarios']};reservations={r['id'] for r in tables['agendamentos']}
-    for table in ('usuarios','funcionarios','assinaturas','pagamentos','agendamentos','bloqueios'):
+    for table in ('usuarios','funcionarios','assinaturas','pagamentos','agendamentos','bloqueios','cortesias'):
         if any(r['loja_id'] not in shops for r in tables[table]): raise ValueError('Barbearia ausente em '+table)
     for table in ('emails_confirmados','aceites'):
         if any(r['usuario_id'] not in users for r in tables[table]): raise ValueError('Conta ausente em '+table)
@@ -54,7 +56,7 @@ def restaurar(tables,sqlite_path=None,postgres=False):
             for col in columns:
                 typ='BIGINT' if table in INTEGER.get(col,set()) else 'REAL' if col=='preco' else 'TEXT'
                 if table=='agendamentos' and col=='id': typ='BIGSERIAL' if postgres else 'INTEGER'
-                primary=col=='id' or (table in ('assinaturas',) and col=='loja_id') or (table in ('aceites','emails_confirmados') and col=='usuario_id') or (table=='links_clientes' and col=='reserva_id')
+                primary=col=='id' or (table in ('assinaturas','cortesias') and col=='loja_id') or (table in ('aceites','emails_confirmados') and col=='usuario_id') or (table=='links_clientes' and col=='reserva_id')
                 definitions.append(col+' '+typ+(' PRIMARY KEY' if primary else '')+(' UNIQUE' if (table,col) in {('lojas','slug'),('usuarios','email'),('usuarios','loja_id'),('funcionarios','email'),('pagamentos','referencia'),('links_clientes','token')} else ''))
             if table=='funcionarios': definitions.append('UNIQUE(loja_id,barbeiro_id)')
             db.execute('CREATE TABLE '+table+' ('+','.join(definitions)+')')
