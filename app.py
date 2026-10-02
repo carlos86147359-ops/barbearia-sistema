@@ -60,6 +60,8 @@ def iniciar():
         db.execute('CREATE TABLE IF NOT EXISTS limites (chave TEXT PRIMARY KEY, janela BIGINT NOT NULL, quantidade INTEGER NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS assinaturas (loja_id TEXT PRIMARY KEY, vencimento TEXT)')
         db.execute('CREATE TABLE IF NOT EXISTS pagamentos (id TEXT PRIMARY KEY, loja_id TEXT NOT NULL, referencia TEXT UNIQUE NOT NULL, valor_centavos INTEGER NOT NULL, confirmado_por TEXT NOT NULL, confirmado_em TEXT NOT NULL, vencimento TEXT NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS funcionarios (id TEXT PRIMARY KEY, loja_id TEXT NOT NULL, barbeiro_id TEXT NOT NULL, email TEXT UNIQUE NOT NULL, senha TEXT NOT NULL, ativo INTEGER NOT NULL DEFAULT 1, UNIQUE(loja_id,barbeiro_id))')
+        db.execute('CREATE TABLE IF NOT EXISTS convites (token TEXT PRIMARY KEY, loja_id TEXT NOT NULL, barbeiro_id TEXT NOT NULL, email TEXT NOT NULL, expira BIGINT NOT NULL)')
         chave = 'BIGSERIAL PRIMARY KEY' if DATABASE_URL else 'INTEGER PRIMARY KEY'
         db.execute(f'''CREATE TABLE IF NOT EXISTS agendamentos (id {chave}, cliente_nome TEXT NOT NULL, cliente_telefone TEXT NOT NULL,
             barbeiro_nome TEXT NOT NULL, servico_nome TEXT NOT NULL, data_hora TEXT NOT NULL, preco REAL NOT NULL, criado_em TEXT,
@@ -126,12 +128,21 @@ def limitar(request, action, maximum, seconds=900):
 def usuario(request, db, change=False):
     raw = request.cookies.get(COOKIE,'')
     token = hashlib.sha256(raw.encode()).hexdigest()
-    row = db.execute('''SELECT usuarios.*, sessoes.csrf FROM sessoes JOIN usuarios ON usuarios.id=sessoes.usuario_id
-        WHERE sessoes.token=? AND sessoes.expira>?''',(token,int(time.time()))).fetchone()
+    row = db.execute("""SELECT contas.*, sessoes.csrf FROM sessoes JOIN (
+        SELECT id,loja_id,email,senha,'dono' AS papel,'' AS barbeiro_id FROM usuarios
+        UNION ALL SELECT id,loja_id,email,senha,'barbeiro' AS papel,barbeiro_id FROM funcionarios WHERE ativo=1
+        ) AS contas ON contas.id=sessoes.usuario_id WHERE sessoes.token=? AND sessoes.expira>?""",(token,int(time.time()))).fetchone()
+    if row and row['papel']=='barbeiro' and not any(b['id']==row['barbeiro_id'] for b in config_da_loja(db,row['loja_id'])['barbeiros']):
+        row=None
     if not row: raise HTTPException(401,'Entre na sua conta para acessar o painel.')
     if change and not hmac.compare_digest(row['csrf'],request.headers.get('x-csrf-token','')):
         raise HTTPException(403,'Atualize a página e tente novamente.')
     return dict(row)
+
+def dono(request,db,change=False):
+    user=usuario(request,db,change)
+    if user['papel']!='dono': raise HTTPException(403,'Acesso exclusivo do dono da barbearia.')
+    return user
 
 def abrir_sessao(db, user_id, response):
     raw, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
@@ -167,7 +178,7 @@ def cadastrar(data: Cadastro, request: Request, response: Response):
     with banco() as db:
         if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
         else: db.execute('BEGIN IMMEDIATE')
-        if db.execute('SELECT id FROM usuarios WHERE email=?',(email,)).fetchone(): raise HTTPException(409,'Esse e-mail já possui conta. Use Entrar.')
+        if db.execute('SELECT id FROM funcionarios WHERE email=?',(email,)).fetchone() or db.execute('SELECT id FROM usuarios WHERE email=?',(email,)).fetchone(): raise HTTPException(409,'Esse e-mail já possui conta. Use Entrar.')
         if db.execute('SELECT id FROM lojas WHERE slug=?',(slug,)).fetchone(): raise HTTPException(409,'Esse endereço já está em uso. Escolha outro.')
         db.execute('INSERT INTO lojas(id,slug,configuracao) VALUES(?,?,?)',(shop_id,slug,json.dumps(config)))
         db.execute('INSERT INTO usuarios(id,loja_id,email,senha) VALUES(?,?,?,?)',(user_id,shop_id,email,hash_senha(data.senha)))
@@ -180,6 +191,9 @@ def login(data: Acesso, request: Request, response: Response):
     email=email_valido(data.email)
     with banco() as db:
         row=db.execute('SELECT * FROM usuarios WHERE email=?',(email,)).fetchone()
+        if not row:
+            row=db.execute('SELECT * FROM funcionarios WHERE email=? AND ativo=1',(email,)).fetchone()
+            if row and not any(b['id']==row['barbeiro_id'] for b in config_da_loja(db,row['loja_id'])['barbeiros']): row=None
         stored=row['senha'] if row else '00'*16+':'+'00'*32
         if not confere_senha(data.senha,stored) or not row: raise HTTPException(401,'E-mail ou senha incorretos.')
         csrf=abrir_sessao(db,row['id'],response)
@@ -190,7 +204,7 @@ def sessao(request: Request):
     with banco() as db:
         user=usuario(request,db)
         shop=db.execute('SELECT slug FROM lojas WHERE id=?',(user['loja_id'],)).fetchone()
-    return {'email':user['email'],'csrf':user['csrf'],'slug':shop['slug'],'administrador':eh_admin(user)}
+    return {'email':user['email'],'csrf':user['csrf'],'slug':shop['slug'],'administrador':eh_admin(user),'papel':user['papel'],'barbeiro_id':user['barbeiro_id']}
 
 @app.post('/api/logout')
 def logout(request: Request,response: Response):
@@ -203,10 +217,10 @@ def logout(request: Request,response: Response):
 
 def eh_admin(user):
     allowed={e.strip().lower() for e in os.environ.get('ADMIN_EMAILS','').split(',') if e.strip()}
-    return user['email'].lower() in allowed
+    return user.get('papel','dono')=='dono' and user['email'].lower() in allowed
 
 def administrador(request,db,change=False):
-    user=usuario(request,db,change)
+    user=dono(request,db,change)
     if not eh_admin(user): raise HTTPException(403,'Acesso exclusivo do administrador do sistema.')
     return user
 
@@ -224,7 +238,7 @@ def exigir_assinatura(db,shop_id):
 @app.get('/api/assinatura')
 def minha_assinatura(request: Request):
     with banco() as db:
-        user=usuario(request,db)
+        user=dono(request,db)
         info=assinatura(db,user['loja_id'])
         payments=[dict(r) for r in db.execute('SELECT valor_centavos,confirmado_em,vencimento FROM pagamentos WHERE loja_id=? ORDER BY confirmado_em DESC',(user['loja_id'],)).fetchall()]
     return {**info,'pix_chave':os.environ.get('PIX_KEY',''),'pix_titular':os.environ.get('PIX_HOLDER',''),'whatsapp':os.environ.get('BILLING_WHATSAPP',''),'pagamentos':payments}
@@ -259,6 +273,96 @@ def confirmar_pix(shop_id: str,data: ConfirmacaoPix,request: Request):
         db.execute('INSERT INTO assinaturas(loja_id,vencimento) VALUES(?,?) ON CONFLICT(loja_id) DO UPDATE SET vencimento=excluded.vencimento',(shop_id,due))
     return {'vencimento':due,'valor':90}
 
+
+@app.get('/api/equipe')
+def equipe(request: Request):
+    with banco() as db:
+        user=dono(request,db)
+        accounts={r['barbeiro_id']:dict(r) for r in db.execute('SELECT barbeiro_id,email,ativo FROM funcionarios WHERE loja_id=?',(user['loja_id'],)).fetchall()}
+        invites={r['barbeiro_id']:dict(r) for r in db.execute('SELECT barbeiro_id,email FROM convites WHERE loja_id=? AND expira>?',(user['loja_id'],int(time.time()))).fetchall()}
+        return [{'id':b['id'],'nome':b['nome'],'conta':accounts.get(b['id']),'convite':invites.get(b['id'])} for b in config_da_loja(db,user['loja_id'])['barbeiros']]
+
+class ConviteNovo(BaseModel):
+    email: str = Field(min_length=3,max_length=150)
+
+@app.post('/api/equipe/{barber_id}/convite',status_code=201)
+def convidar(barber_id: str,data: ConviteNovo,request: Request):
+    email=email_valido(data.email)
+    if eh_admin({'email':email}): raise HTTPException(409,'Use o e-mail pessoal do profissional, não a conta administrativa.')
+    raw=secrets.token_urlsafe(32)
+    with banco() as db:
+        if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
+        else: db.execute('BEGIN IMMEDIATE')
+        user=dono(request,db,True)
+        if not any(b['id']==barber_id for b in config_da_loja(db,user['loja_id'])['barbeiros']): raise HTTPException(404,'Salve o profissional nas configurações antes de convidar.')
+        if db.execute('SELECT id FROM usuarios WHERE email=?',(email,)).fetchone(): raise HTTPException(409,'Esse e-mail já pertence a um dono de barbearia.')
+        row=db.execute('SELECT * FROM funcionarios WHERE email=?',(email,)).fetchone()
+        if row and (row['loja_id']!=user['loja_id'] or row['barbeiro_id']!=barber_id): raise HTTPException(409,'Esse e-mail já possui outro acesso.')
+        db.execute('DELETE FROM convites WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],barber_id))
+        db.execute('INSERT INTO convites(token,loja_id,barbeiro_id,email,expira) VALUES(?,?,?,?,?)',(hashlib.sha256(raw.encode()).hexdigest(),user['loja_id'],barber_id,email,int(time.time())+7*86400))
+    return {'link':'/convite#'+raw,'validade_dias':7}
+
+@app.post('/api/equipe/{barber_id}/revogar')
+def revogar(barber_id: str,request: Request):
+    with banco() as db:
+        if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
+        else: db.execute('BEGIN IMMEDIATE')
+        user=dono(request,db,True)
+        row=db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],barber_id)).fetchone()
+        if row:
+            db.execute('UPDATE funcionarios SET ativo=0 WHERE id=?',(row['id'],))
+            db.execute('DELETE FROM sessoes WHERE usuario_id=?',(row['id'],))
+        db.execute('DELETE FROM convites WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],barber_id))
+    return {'status':'revogado'}
+
+class TokenConvite(BaseModel):
+    token: str = Field(min_length=20,max_length=100)
+
+def convite_valido(db,token):
+    row=db.execute('SELECT * FROM convites WHERE token=? AND expira>?',(hashlib.sha256(token.encode()).hexdigest(),int(time.time()))).fetchone()
+    if not row: raise HTTPException(410,'Convite inválido, expirado ou já utilizado. Peça outro ao dono.')
+    config=config_da_loja(db,row['loja_id'])
+    barber=next((b for b in config['barbeiros'] if b['id']==row['barbeiro_id']),None)
+    if not barber: raise HTTPException(410,'Este profissional não está mais cadastrado.')
+    return row,config,barber
+
+@app.post('/api/convite/info')
+def convite_info(data: TokenConvite,request: Request):
+    limitar(request,'convite-info',60)
+    with banco() as db: row,config,barber=convite_valido(db,data.token)
+    return {'email':row['email'],'barbearia':config['nome'],'profissional':barber['nome']}
+
+class AceitarConvite(TokenConvite):
+    senha: str = Field(min_length=10,max_length=128)
+
+@app.post('/api/convite/aceitar',status_code=201)
+def aceitar_convite(data: AceitarConvite,request: Request,response: Response):
+    limitar(request,'convite-aceitar',20)
+    with banco() as db:
+        if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
+        else: db.execute('BEGIN IMMEDIATE')
+        row,config,barber=convite_valido(db,data.token)
+        if eh_admin({'email':row['email']}) or db.execute('SELECT id FROM usuarios WHERE email=?',(row['email'],)).fetchone(): raise HTTPException(409,'Esse e-mail já está em uso. Peça outro convite ao dono.')
+        other=db.execute('SELECT * FROM funcionarios WHERE email=?',(row['email'],)).fetchone()
+        if other and (other['loja_id']!=row['loja_id'] or other['barbeiro_id']!=row['barbeiro_id']): raise HTTPException(409,'Esse e-mail já possui outro acesso.')
+        existing=db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND barbeiro_id=?',(row['loja_id'],row['barbeiro_id'])).fetchone()
+        uid=existing['id'] if existing else secrets.token_hex(16)
+        if existing:
+            db.execute('DELETE FROM sessoes WHERE usuario_id=?',(uid,))
+            db.execute('UPDATE funcionarios SET email=?,senha=?,ativo=1 WHERE id=?',(row['email'],hash_senha(data.senha),uid))
+        else: db.execute('INSERT INTO funcionarios(id,loja_id,barbeiro_id,email,senha,ativo) VALUES(?,?,?,?,?,1)',(uid,row['loja_id'],row['barbeiro_id'],row['email'],hash_senha(data.senha)))
+        db.execute('DELETE FROM convites WHERE token=?',(row['token'],))
+        csrf=abrir_sessao(db,uid,response)
+    return {'csrf':csrf}
+
+@app.get('/api/meu-perfil')
+def meu_perfil(request: Request):
+    with banco() as db:
+        user=usuario(request,db)
+        config=config_da_loja(db,user['loja_id'])
+        barber=next((b for b in config['barbeiros'] if b['id']==user['barbeiro_id']),None)
+        return {'barbearia':config['nome'],'profissional':barber['nome'] if barber else '', 'agenda_liberada':assinatura(db,user['loja_id'])['ativa']}
+
 class Barbeiro(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,50}$')
     nome: str = Field(min_length=2,max_length=100)
@@ -286,7 +390,7 @@ def config_da_loja(db,shop_id):
 
 @app.get('/api/configuracao')
 def ler_config(request: Request):
-    with banco() as db: return config_da_loja(db,usuario(request,db)['loja_id'])
+    with banco() as db: return config_da_loja(db,dono(request,db)['loja_id'])
 
 @app.put('/api/configuracao')
 def salvar_config(data: Configuracao,request: Request):
@@ -304,7 +408,18 @@ def salvar_config(data: Configuracao,request: Request):
     if not periods or any(p['inicio']>=p['fim'] for p in periods) or any(a['fim']>b['inicio'] for a,b in zip(periods,periods[1:])): raise HTTPException(422,'Os períodos devem ter início antes do fim e não podem se sobrepor.')
     config['periodos']=periods
     with banco() as db:
-        user=usuario(request,db,True)
+        if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
+        else: db.execute('BEGIN IMMEDIATE')
+        user=dono(request,db,True)
+        kept={b['id'] for b in config['barbeiros']}
+        old=config_da_loja(db,user['loja_id'])
+        for b in old['barbeiros']:
+            if b['id'] not in kept:
+                staff=db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],b['id'])).fetchone()
+                if staff:
+                    db.execute('UPDATE funcionarios SET ativo=0 WHERE id=?',(staff['id'],))
+                    db.execute('DELETE FROM sessoes WHERE usuario_id=?',(staff['id'],))
+                db.execute('DELETE FROM convites WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],b['id']))
         db.execute('UPDATE lojas SET configuracao=? WHERE id=?',(json.dumps(config),user['loja_id']))
     return config
 
@@ -409,6 +524,8 @@ def criar(slug: str,data: Reserva,request: Request):
 def agenda(request: Request):
     with banco() as db:
         user=usuario(request,db)
+        if user['papel']=='barbeiro':
+            return [dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? AND barbeiro_id=? ORDER BY inicio,id',(user['loja_id'],user['barbeiro_id']))]
         return [dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? ORDER BY inicio,id',(user['loja_id'],))]
 
 class Situacao(BaseModel):
@@ -421,7 +538,8 @@ def alterar(reservation_id: int,data: Situacao,request: Request):
         if not DATABASE_URL: db.execute('BEGIN IMMEDIATE')
         user=usuario(request,db,True)
         row=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(reservation_id,user['loja_id'])).fetchone()
-        if not row: raise HTTPException(404,'Agendamento não encontrado.')
+        if not row or (user['papel']=='barbeiro' and row['barbeiro_id']!=user['barbeiro_id']): raise HTTPException(404,'Agendamento não encontrado.')
+        if user['papel']=='barbeiro' and (data.status!='concluido' or row['status']!='agendado'): raise HTTPException(403,'Você pode concluir seus atendimentos agendados. Peça ao dono para cancelar ou reabrir.')
         if DATABASE_URL: travar(db,user['loja_id'],row['barbeiro_id'])
         if row['status']=='cancelado' and data.status!='cancelado' and ocupado(db,user['loja_id'],row['barbeiro_id'],datetime.fromisoformat(row['inicio']),row['duracao_minutos'],reservation_id): raise HTTPException(409,'Esse horário já foi ocupado por outra reserva.')
         db.execute('UPDATE agendamentos SET status=? WHERE id=? AND loja_id=?',(data.status,reservation_id,user['loja_id']))
@@ -436,6 +554,7 @@ def health():
 def head(): return None
 
 @app.get('/',response_class=HTMLResponse)
+@app.get('/convite',response_class=HTMLResponse)
 @app.get('/gestao',response_class=HTMLResponse)
 @app.get('/painel',response_class=HTMLResponse)
 @app.get('/entrar',response_class=HTMLResponse)
