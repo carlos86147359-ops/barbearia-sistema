@@ -7,6 +7,14 @@ new vm.Script(fs.readFileSync(path.join(root,'image-upload.js'),'utf8'));
 const route=script.slice(script.indexOf('async function entrada()'),script.indexOf('async function iniciar()'));
 const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.indexOf('function renderPrimeirosPassos('));
 (async()=>{
+  const mapScript=script.slice(script.indexOf('function shopMapUrl('),script.indexOf('function shopLanding('));
+  const mapCtx={URL,encodeURIComponent,config:{endereco:'Rua Teste, 10 & Centro'},esc:s=>String(s),UI:{icon:()=>''}};
+  vm.createContext(mapCtx);vm.runInContext(mapScript,mapCtx);
+  assert.equal(mapCtx.shopMapUrl(),'https://www.google.com/maps/search/?api=1&query=Rua%20Teste%2C%2010%20%26%20Centro');
+  mapCtx.config.localizacao_url='https://maps.app.goo.gl/teste';assert.equal(mapCtx.shopMapUrl(),mapCtx.config.localizacao_url);
+  assert.match(mapCtx.shopDirections('button'),/Como chegar/);
+  mapCtx.config.localizacao_url='javascript:alert(1)';assert.match(mapCtx.shopMapUrl(),/google.com\/maps/);
+  mapCtx.config={};assert.equal(mapCtx.shopDirections(),'');
   let drawn,closed=0;
   const imageCtx={Map,createImageBitmap:async()=>({width:4000,height:2000,close:()=>closed++}),document:{createElement:()=>{const canvas={getContext:()=>({drawImage:()=>drawn=[canvas.width,canvas.height]}),toBlob:cb=>cb({type:'image/webp',size:1024})};return canvas;}}};
   vm.createContext(imageCtx);vm.runInContext(fs.readFileSync(path.join(root,'image-upload.js'),'utf8')+';this.images=ShopImages;',imageCtx);
