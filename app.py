@@ -573,7 +573,15 @@ def criar(slug: str,data: Reserva,request: Request):
         cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} às {data.horario}',float(service['preco']),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
         reservation_id=cur.fetchone()['id'] if DATABASE_URL else cur.lastrowid
         management=criar_link_cliente(db,reservation_id)
-    message=f"Olá! Agendei {service['nome']} com {barber['nome']} em {config['nome']}, para {data.data} às {data.horario}. Meu nome é {name}. Reserva #{reservation_id}."
+    message=(f"Olá! Fiz um agendamento pelo aplicativo.\n\n"
+             f"*Meu agendamento*\n"
+             f"*Cliente:* {name}\n"
+             f"*Barbearia:* {config['nome']}\n"
+             f"*Serviço:* {service['nome']}\n"
+             f"*Profissional:* {barber['nome']}\n"
+             f"*Data:* {data.data.strftime('%d/%m/%Y')}\n"
+             f"*Horário:* {data.horario}\n\n"
+             f"Reserva #{reservation_id}. Até lá!")
     professional_phone=barber.get('whatsapp','')
     store_phone=professional_phone or config['whatsapp']
     if len(store_phone) in (10,11): store_phone='55'+store_phone
