@@ -624,6 +624,9 @@ def design_js(): return FileResponse(ROOT/'design-system.js',media_type='applica
 @app.get('/image-upload.js')
 def image_upload_js(): return FileResponse(ROOT/'image-upload.js',media_type='application/javascript')
 
+@app.get('/agenda-live.js')
+def agenda_live_script(): return FileResponse(ROOT/'agenda-live.js',media_type='application/javascript')
+
 @app.get('/',response_class=HTMLResponse)
 @app.get('/recuperar-senha',response_class=HTMLResponse)
 @app.get('/redefinir-senha',response_class=HTMLResponse)
