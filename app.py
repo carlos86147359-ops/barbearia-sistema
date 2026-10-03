@@ -12,10 +12,10 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Response, BackgroundTasks
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent
@@ -402,6 +402,11 @@ class Configuracao(BaseModel):
     dias: list[int] = Field(max_length=7)
     periodos: list[Periodo] = Field(max_length=4)
     intervalo: int = Field(ge=5,le=120)
+    logo_url: str = Field(default='',max_length=1000)
+    capa_url: str = Field(default='',max_length=1000)
+    cor_principal: str = Field(default='#dfa94d',pattern=r'^#[0-9a-fA-F]{6}$')
+    endereco: str = Field(default='',max_length=250)
+    instagram: str = Field(default='',max_length=250)
 
 def config_da_loja(db,shop_id):
     return json.loads(db.execute('SELECT configuracao FROM lojas WHERE id=?',(shop_id,)).fetchone()['configuracao'])
@@ -413,6 +418,17 @@ def ler_config(request: Request):
 @app.put('/api/configuracao')
 def salvar_config(data: Configuracao,request: Request):
     config=json.loads(data.model_dump_json())
+    for field in ('logo_url','capa_url','instagram'):
+        value=config[field].strip()
+        if value:
+            try:
+                parsed=urlsplit(value)
+                valid=parsed.scheme=='https' and bool(parsed.hostname) and not parsed.username and not parsed.password and not any(c.isspace() for c in value)
+                if field=='instagram': valid=valid and parsed.hostname in ('instagram.com','www.instagram.com')
+            except ValueError: valid=False
+            if not valid: raise HTTPException(422,'Use links HTTPS válidos para logo, capa e perfil do Instagram.')
+        config[field]=value
+    config['endereco']=config['endereco'].strip()
     for barber in config['barbeiros']:
         raw=barber['whatsapp'].strip()
         number=re.sub(r'\D','',raw)
@@ -439,6 +455,9 @@ def salvar_config(data: Configuracao,request: Request):
         user=dono(request,db,True)
         kept={b['id'] for b in config['barbeiros']}
         old=config_da_loja(db,user['loja_id'])
+        # Clientes antigos da API continuam preservando a identidade já configurada.
+        for field in ('logo_url','capa_url','cor_principal','endereco','instagram'):
+            if field not in data.model_fields_set and field in old: config[field]=old[field]
         for b in old['barbeiros']:
             if b['id'] not in kept:
                 staff=db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],b['id'])).fetchone()
@@ -584,6 +603,12 @@ def health():
 @app.head('/')
 def head(): return None
 
+@app.get('/design-system.css')
+def design_css(): return FileResponse(ROOT/'design-system.css',media_type='text/css')
+
+@app.get('/design-system.js')
+def design_js(): return FileResponse(ROOT/'design-system.js',media_type='application/javascript')
+
 @app.get('/',response_class=HTMLResponse)
 @app.get('/recuperar-senha',response_class=HTMLResponse)
 @app.get('/redefinir-senha',response_class=HTMLResponse)
@@ -611,4 +636,3 @@ _spec=_importlib.spec_from_file_location("recursos_barber",ROOT / "recursos.py")
 _recursos=_importlib.module_from_spec(_spec)
 _spec.loader.exec_module(_recursos)
 _recursos.instalar(app,globals())
-
