@@ -13,6 +13,7 @@ from pathlib import Path
 spec=importlib.util.spec_from_file_location('backup_schema',Path(__file__).with_name('recursos.py'))
 schema=importlib.util.module_from_spec(spec);spec.loader.exec_module(schema)
 TABLES=schema.TABLES
+from produtos import TABLES as PRODUCT_TABLES, DDL as PRODUCT_DDL, INDEXES as PRODUCT_INDEXES
 INTEGER={'id':{'agendamentos'},'ativo':{'funcionarios'},'valor_centavos':{'pagamentos'},'reserva_id':{'links_clientes'},'duracao_minutos':{'agendamentos'},'comissao_pct':{'agendamentos'}}
 
 def ler(path,checksum=None):
@@ -20,9 +21,11 @@ def ler(path,checksum=None):
     if checksum and hashlib.sha256(raw).hexdigest()!=checksum.strip().lower(): raise ValueError('A soma de verificação não confere.')
     data=json.loads(raw)
     keys=set(data.get('tabelas',{}))
-    if data.get('formato')!='barbersaas-backup' or data.get('versao')!=1 or keys not in (set(TABLES),set(TABLES)-{'cortesias'}): raise ValueError('Formato de cópia não reconhecido.')
+    allowed=[set(TABLES),set(TABLES)-{'cortesias'},set(TABLES)-set(PRODUCT_TABLES),set(TABLES)-set(PRODUCT_TABLES)-{'cortesias'}]
+    if data.get('formato')!='barbersaas-backup' or data.get('versao')!=1 or keys not in allowed: raise ValueError('Formato de cópia não reconhecido.')
     tables=data['tabelas']
     tables.setdefault('cortesias',[])
+    for table in PRODUCT_TABLES: tables.setdefault(table,[])
     for table,columns in TABLES.items():
         if not isinstance(tables[table],list): raise ValueError('Tabela inválida: '+table)
         for row in tables[table]:
@@ -34,6 +37,18 @@ def ler(path,checksum=None):
     for table in ('emails_confirmados','aceites'):
         if any(r['usuario_id'] not in users for r in tables[table]): raise ValueError('Conta ausente em '+table)
     if any(r['reserva_id'] not in reservations for r in tables['links_clientes']): raise ValueError('Reserva ausente no link privado.')
+    for table in PRODUCT_TABLES:
+        if any(r['loja_id'] not in shops for r in tables[table]): raise ValueError('Barbearia ausente em '+table)
+    products={(r['loja_id'],r['id']) for r in tables['produtos']}
+    variants={(r['loja_id'],r['id']):r['produto_id'] for r in tables['variantes_produto']}
+    sales={(r['loja_id'],r['id']) for r in tables['vendas_produtos']}
+    staff={(r['loja_id'],r['id']) for r in tables['funcionarios']}
+    for table in ('variantes_produto','itens_venda','movimentacoes_estoque'):
+        for row in tables[table]:
+            if (row['loja_id'],row['produto_id']) not in products: raise ValueError('Produto ausente em '+table)
+            if table!='variantes_produto' and variants.get((row['loja_id'],row['variante_id']))!=row['produto_id']: raise ValueError('Variante incompatível em '+table)
+            if table!='variantes_produto' and row['venda_id'] is not None and (row['loja_id'],row['venda_id']) not in sales: raise ValueError('Venda ausente em '+table)
+    if any((r['loja_id'],r['funcionario_id']) not in staff for r in tables['permissoes_caixa']): raise ValueError('Profissional ausente nas permissões.')
     return tables
 
 def restaurar(tables,sqlite_path=None,postgres=False):
@@ -59,9 +74,10 @@ def restaurar(tables,sqlite_path=None,postgres=False):
                 primary=col=='id' or (table in ('assinaturas','cortesias') and col=='loja_id') or (table in ('aceites','emails_confirmados') and col=='usuario_id') or (table=='links_clientes' and col=='reserva_id')
                 definitions.append(col+' '+typ+(' PRIMARY KEY' if primary else '')+(' UNIQUE' if (table,col) in {('lojas','slug'),('usuarios','email'),('usuarios','loja_id'),('funcionarios','email'),('pagamentos','referencia'),('links_clientes','token')} else ''))
             if table=='funcionarios': definitions.append('UNIQUE(loja_id,barbeiro_id)')
-            db.execute('CREATE TABLE '+table+' ('+','.join(definitions)+')')
+            db.execute('CREATE TABLE '+table+' ('+(PRODUCT_DDL[table] if table in PRODUCT_DDL else ','.join(definitions))+')')
             sql='INSERT INTO '+table+' ('+','.join(columns)+') VALUES ('+','.join([placeholder]*len(columns))+')'
             for row in tables[table]: db.execute(sql,tuple(row[col] for col in columns))
+        for sql in PRODUCT_INDEXES: db.execute(sql)
         if postgres:
             db.execute("SELECT setval(pg_get_serial_sequence('agendamentos','id'),COALESCE((SELECT MAX(id) FROM agendamentos),1),(SELECT COUNT(*)>0 FROM agendamentos))")
         for table in TABLES:

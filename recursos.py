@@ -26,6 +26,9 @@ TABLES={
     'aceites':['usuario_id','versao','aceito_em'],
 }
 
+from produtos import TABLES as PRODUCT_TABLES
+TABLES.update(PRODUCT_TABLES)
+
 class EmailPedido(BaseModel):
     email: str = Field(min_length=3,max_length=150)
 
@@ -313,4 +316,3 @@ def instalar(app,c):
 
     # Pontos de integração usados pelo núcleo e pelos testes de envio, sem expor tokens em respostas.
     c.update({'registrar_aceite':registrar_aceite,'email_pronto':email_pronto,'email_confirmado':email_confirmado,'enviar_acao_email':enviar_acao_email,'enviar_email':enviar_email,'bloqueado':bloqueado,'criar_link_cliente':criar_link_cliente,'backup_payload':backup_payload,'BACKUP_TABLES':TABLES})
-

@@ -71,3 +71,5 @@ const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.i
   uiEvents.appinstalled();assert.equal(controls['instalacao-app'].hidden,true);
   console.log('OK: login, progresso, instalação, conexão e nenhuma alteração/API armazenada offline.');
 })().catch(err=>{console.error(err);process.exitCode=1;});
+
+require('./test_produtos_frontend.cjs');

@@ -657,3 +657,6 @@ _recursos.instalar(app,globals())
 
 from imagens import instalar as instalar_imagens
 instalar_imagens(app,globals())
+
+from produtos import instalar as instalar_produtos
+instalar_produtos(app,globals())
