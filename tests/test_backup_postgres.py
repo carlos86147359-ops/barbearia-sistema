@@ -26,6 +26,9 @@ with tempfile.TemporaryDirectory() as tmp:
     day=(datetime.now(source.BRASIL)+timedelta(days=2)).date().isoformat()
     payload={'cliente_nome':'Cliente fictício','cliente_telefone':'11900000000','barbeiro_id':'p','servico_id':'c','data':day,'horario':'09:00'}
     booking=cli.post('/api/publico/ensaio/agendamentos',json=payload);assert booking.status_code==201
+    product=cli.post('/api/produtos/catalogo',headers=headers,json={'nome':'Pomada teste','custo_centavos':1200,'preco_centavos':3000,'variantes':[{'quantidade':3}]});assert product.status_code==201,product.text
+    variant=cli.get('/api/produtos/catalogo').json()[0]['variantes'][0]['id']
+    sale=cli.post('/api/produtos/vendas',headers=headers,json={'itens':[{'variante_id':variant,'quantidade':2}],'pagamento':'pix','idempotencia':'fixture-product-sale-12345'});assert sale.status_code==201,sale.text
     path=Path(tmp)/'fixture.json';path.write_text(json.dumps(source.backup_payload()),encoding='utf-8')
     restore=load(ROOT/'restaurar_backup.py','restore_pg_fixture');tables=restore.ler(path)
     os.environ['RESTORE_DATABASE_URL']=dsn
@@ -35,6 +38,15 @@ with tempfile.TemporaryDirectory() as tmp:
     os.environ['DATABASE_URL']=dsn
     recovered=load(ROOT/'app.py','recovered_postgres');client=TestClient(recovered.app)
     assert client.post('/api/login',json={'email':'ensaio@example.com','senha':password}).status_code==200
+    product_rows=client.get('/api/produtos/catalogo').json();assert product_rows[0]['variantes'][0]['quantidade']==1
+    assert client.get('/api/produtos/vendas').json()[0]['custo_centavos']==2400
+    from concurrent.futures import ThreadPoolExecutor
+    import secrets
+    h={'X-CSRF-Token':client.get('/api/sessao').json()['csrf']}
+    def buy(_):return client.post('/api/produtos/vendas',headers=h,json={'itens':[{'variante_id':variant,'quantidade':1}],'pagamento':'dinheiro','idempotencia':secrets.token_hex(20)})
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(buy,range(2)))
+    assert sorted(r.status_code for r in results)==[201,409],[(r.status_code,r.text) for r in results]
+    assert client.get('/api/produtos/catalogo').json()[0]['variantes'][0]['quantidade']==0
     assert client.get('/api/assinatura').json()['status']=='cortesia'
     assert len(client.get('/api/agendamentos').json())==1
     new=client.post('/api/publico/ensaio/agendamentos',json={**payload,'horario':'10:00'})
