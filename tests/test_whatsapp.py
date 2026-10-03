@@ -24,6 +24,9 @@ with tempfile.TemporaryDirectory() as tmp:
         url=urlparse(r.json()['link_whatsapp']);assert url.netloc=='wa.me' and url.path=='/'+number
         message=parse_qs(url.query)['text'][0]
         assert 'Cliente & Teste' in message and 'Reserva #' in message
+        assert '*Cliente:* Cliente & Teste\n*Barbearia:* Loja Teste\n*Serviço:* Corte\n*Profissional:* ' in message
+        assert '*Data:* '+datetime.fromisoformat(day).strftime('%d/%m/%Y')+'\n*Horário:* 09:00\n\n' in message
+        assert message.startswith('Olá! Fiz um agendamento pelo aplicativo.\n\n*Meu agendamento*\n')
         assert r.json()['whatsapp_destinatario']==target
     config['whatsapp']=''
     assert owner.put('/api/configuracao',headers=h,json=config).status_code==200
@@ -41,4 +44,3 @@ with tempfile.TemporaryDirectory() as tmp:
     assert owner.put('/api/configuracao',headers=h,json=config).status_code==422
     assert owner.get('/api/configuracao').json()['barbeiros'][0]['whatsapp']=='61981332994'
     print('OK: WhatsApp individual, normalização com DDD/55, loja como alternativa, ausência de número, mensagem codificada e rejeição de números inválidos.')
-
