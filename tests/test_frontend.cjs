@@ -2,10 +2,22 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const root=path.resolve(__dirname,'..');
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const script=html.split('<script>')[1].split('</script>')[0];
-new vm.Script(script);new vm.Script(fs.readFileSync(path.join(root,'pwa.js'),'utf8'));
+new vm.Script(script);new vm.Script(fs.readFileSync(path.join(root,'pwa.js'),'utf8'));new vm.Script(fs.readFileSync(path.join(root,'design-system.js'),'utf8'));
 const route=script.slice(script.indexOf('async function entrada()'),script.indexOf('async function iniciar()'));
 const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.indexOf('function renderPrimeirosPassos('));
 (async()=>{
+  const available=script.slice(script.indexOf('async function loadBookingAvailability('),script.indexOf('async function horarios()'));
+  let active=0,peak=0;
+  const slotsCtx={Map,URLSearchParams,config:{barbeiros:[{id:'a'},{id:'b'},{id:'c'},{id:'d'}]},slug:'loja',api:async url=>{active++;peak=Math.max(active,peak);await Promise.resolve();active--;const id=new URL(url,'https://example.com').searchParams.get('barbeiro_id');return {horarios:id==='a'?['10:00','09:00']:id==='b'?['09:30','09:00']:[]};}};
+  vm.createContext(slotsCtx);vm.runInContext(available,slotsCtx);
+  const choice={preferencia:'*',data:'2026-10-05',servico:{id:'corte'}};
+  const slots=await slotsCtx.loadBookingAvailability(choice);
+  assert.deepEqual([...slots.keys()],['09:00','09:30','10:00']);assert.deepEqual([...slots.get('09:00')],['a','b']);assert.ok(peak<=3);
+  const only=await slotsCtx.loadBookingAvailability({...choice,preferencia:'b',barbeiro:{id:'b'}});assert.deepEqual([...only.keys()],['09:00','09:30']);
+  slotsCtx.api=async()=>{throw Error('conexão indisponível');};await assert.rejects(slotsCtx.loadBookingAvailability(choice));
+  const uiCtx={esc:s=>String(s),document:{body:{style:{setProperty(){}}}}};vm.createContext(uiCtx);vm.runInContext(fs.readFileSync(path.join(root,'design-system.js'),'utf8')+';this.ui=UI;',uiCtx);
+  const calendar=uiCtx.ui.calendar({month:'2026-10',selected:'2026-10-05',min:'2026-10-03',max:'2027-04-01',days:[0,1,2,3,4]});
+  assert.match(calendar,/data-date="2026-10-03"[^>]*disabled/);assert.match(calendar,/data-date="2026-10-05"[^>]*aria-pressed="true"/);assert.match(calendar,/aria-label="Mês anterior" disabled/);
   for(const status of [200,401,500]){
     let panel=false,form=false;
     const ctx={api:async()=>{if(status!==200)throw {status};},location:{replace:p=>{panel=p==='/painel';}},acesso:()=>{form=true;}};
@@ -42,4 +54,3 @@ const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.i
   uiEvents.appinstalled();assert.equal(controls['instalacao-app'].hidden,true);
   console.log('OK: login, progresso, instalação, conexão e nenhuma alteração/API armazenada offline.');
 })().catch(err=>{console.error(err);process.exitCode=1;});
-
