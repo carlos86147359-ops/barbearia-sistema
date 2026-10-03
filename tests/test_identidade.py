@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert r.status_code==201,r.text
         headers.append({'X-CSRF-Token':r.json()['csrf']})
     cfg={'nome':'Loja A','whatsapp':'','comissao':50,'barbeiros':[{'id':'a','nome':'Ana'}],'servicos':[{'id':'c','nome':'Corte','preco':35,'duracao':30}],'dias':[0,1,2,3,4,5],'periodos':[{'inicio':'09:00','fim':'19:00'}],'intervalo':30}
-    brand={'logo_url':'https://example.com/logo.png','capa_url':'https://example.com/capa.jpg','cor_principal':'#ffffff','endereco':'Rua Teste, 10','instagram':'https://www.instagram.com/loja'}
+    brand={'logo_url':'https://example.com/logo.png','capa_url':'https://example.com/capa.jpg','cor_principal':'#ffffff','localizacao_url':'https://maps.app.goo.gl/local-teste','endereco':'Rua Teste, 10','instagram':'https://www.instagram.com/loja'}
     a,b=clients
     assert a.put('/api/configuracao',json={**cfg,**brand},headers=headers[0]).status_code==200
     assert b.put('/api/configuracao',json=cfg,headers=headers[1]).status_code==200
@@ -27,11 +27,15 @@ with tempfile.TemporaryDirectory() as tmp:
     # Um cliente anterior enviando só os campos antigos não apaga a marca.
     assert a.put('/api/configuracao',json=cfg,headers=headers[0]).status_code==200
     assert a.get('/api/configuracao').json()['logo_url']==brand['logo_url']
-    for patch in ({'logo_url':'javascript:alert(1)'},{'capa_url':'http://example.com/capa.jpg'},{'instagram':'https://instagram.com.example.com/loja'},{'logo_url':'https://usuario:senha@example.com/a'},{'cor_principal':'red'}):
+    assert a.get('/api/configuracao').json()['localizacao_url']==brand['localizacao_url']
+    assert public.get('/api/publico/loja-1/configuracao').json()['localizacao_url']==''
+    for patch in ({'logo_url':'javascript:alert(1)'},{'capa_url':'http://example.com/capa.jpg'},{'instagram':'https://instagram.com.example.com/loja'},{'logo_url':'https://usuario:senha@example.com/a'},{'cor_principal':'red'},{'localizacao_url':'javascript:alert(1)'},{'localizacao_url':'https://maps.app.goo.gl.evil.com/a'},{'localizacao_url':'https://google.com/url?q=https://evil.com'},{'localizacao_url':'https://user:pass@maps.google.com/a'},{'localizacao_url':'http://maps.google.com/a'}):
         assert a.put('/api/configuracao',json={**cfg,**brand,**patch},headers=headers[0]).status_code==422
     assert a.get('/api/configuracao').json()['cor_principal']=='#ffffff'
     assert a.put('/api/configuracao',json={**cfg,'logo_url':''},headers=headers[0]).status_code==200
     assert a.get('/api/configuracao').json()['logo_url']==''
+    assert a.put('/api/configuracao',json={**cfg,'localizacao_url':''},headers=headers[0]).status_code==200
+    assert a.get('/api/configuracao').json()['localizacao_url']==''
     assert public.put('/api/configuracao',json=cfg).status_code==401
     assert public.get('/design-system.css').status_code==200
     assert 'text/css' in public.get('/design-system.css').headers['content-type']

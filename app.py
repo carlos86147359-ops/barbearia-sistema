@@ -407,6 +407,7 @@ class Configuracao(BaseModel):
     cor_principal: str = Field(default='#dfa94d',pattern=r'^#[0-9a-fA-F]{6}$')
     endereco: str = Field(default='',max_length=250)
     instagram: str = Field(default='',max_length=250)
+    localizacao_url: str = Field(default='',max_length=1000)
 
 def config_da_loja(db,shop_id):
     return json.loads(db.execute('SELECT configuracao FROM lojas WHERE id=?',(shop_id,)).fetchone()['configuracao'])
@@ -428,6 +429,17 @@ def salvar_config(data: Configuracao,request: Request):
             except ValueError: valid=False
             if not valid: raise HTTPException(422,'Use links HTTPS válidos para logo, capa e perfil do Instagram.')
         config[field]=value
+    value=config['localizacao_url'].strip()
+    if value:
+        try:
+            parsed=urlsplit(value)
+            host=(parsed.hostname or '').lower()
+            google=host in ('google.com','www.google.com','google.com.br','www.google.com.br') and (parsed.path=='/maps' or parsed.path.startswith('/maps/'))
+            maps=host=='maps.google.com' or (host=='maps.app.goo.gl' and len(parsed.path)>1) or (host=='goo.gl' and parsed.path.startswith('/maps/'))
+            valid=parsed.scheme=='https' and not parsed.username and not parsed.password and parsed.port in (None,443) and not any(c.isspace() for c in value) and (google or maps)
+        except ValueError: valid=False
+        if not valid: raise HTTPException(422,'Use um link HTTPS do Google Maps. No Maps, toque em Compartilhar e copie o link.')
+    config['localizacao_url']=value
     config['endereco']=config['endereco'].strip()
     for barber in config['barbeiros']:
         raw=barber['whatsapp'].strip()
@@ -456,7 +468,7 @@ def salvar_config(data: Configuracao,request: Request):
         kept={b['id'] for b in config['barbeiros']}
         old=config_da_loja(db,user['loja_id'])
         # Clientes antigos da API continuam preservando a identidade já configurada.
-        for field in ('logo_url','capa_url','cor_principal','endereco','instagram'):
+        for field in ('logo_url','capa_url','cor_principal','endereco','instagram','localizacao_url'):
             if field not in data.model_fields_set and field in old: config[field]=old[field]
         for b in old['barbeiros']:
             if b['id'] not in kept:
