@@ -609,6 +609,9 @@ def design_css(): return FileResponse(ROOT/'design-system.css',media_type='text/
 @app.get('/design-system.js')
 def design_js(): return FileResponse(ROOT/'design-system.js',media_type='application/javascript')
 
+@app.get('/image-upload.js')
+def image_upload_js(): return FileResponse(ROOT/'image-upload.js',media_type='application/javascript')
+
 @app.get('/',response_class=HTMLResponse)
 @app.get('/recuperar-senha',response_class=HTMLResponse)
 @app.get('/redefinir-senha',response_class=HTMLResponse)
@@ -636,3 +639,6 @@ _spec=_importlib.spec_from_file_location("recursos_barber",ROOT / "recursos.py")
 _recursos=_importlib.module_from_spec(_spec)
 _spec.loader.exec_module(_recursos)
 _recursos.instalar(app,globals())
+
+from imagens import instalar as instalar_imagens
+instalar_imagens(app,globals())

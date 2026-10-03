@@ -3,9 +3,17 @@ const root=path.resolve(__dirname,'..');
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const script=html.split('<script>')[1].split('</script>')[0];
 new vm.Script(script);new vm.Script(fs.readFileSync(path.join(root,'pwa.js'),'utf8'));new vm.Script(fs.readFileSync(path.join(root,'design-system.js'),'utf8'));
+new vm.Script(fs.readFileSync(path.join(root,'image-upload.js'),'utf8'));
 const route=script.slice(script.indexOf('async function entrada()'),script.indexOf('async function iniciar()'));
 const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.indexOf('function renderPrimeirosPassos('));
 (async()=>{
+  let drawn,closed=0;
+  const imageCtx={Map,createImageBitmap:async()=>({width:4000,height:2000,close:()=>closed++}),document:{createElement:()=>{const canvas={getContext:()=>({drawImage:()=>drawn=[canvas.width,canvas.height]}),toBlob:cb=>cb({type:'image/webp',size:1024})};return canvas;}}};
+  vm.createContext(imageCtx);vm.runInContext(fs.readFileSync(path.join(root,'image-upload.js'),'utf8')+';this.images=ShopImages;',imageCtx);
+  await imageCtx.images.compress({type:'image/jpeg',size:5000000},'logo');assert.deepEqual(drawn,[512,256]);
+  await imageCtx.images.compress({type:'image/png',size:5000000},'capa');assert.deepEqual(drawn,[1200,600]);assert.equal(closed,2);
+  await assert.rejects(imageCtx.images.compress({type:'image/svg+xml',size:100},'logo'));
+  await assert.rejects(imageCtx.images.compress({type:'image/jpeg',size:16000000},'logo'));
   const available=script.slice(script.indexOf('async function loadBookingAvailability('),script.indexOf('async function horarios()'));
   let active=0,peak=0;
   const slotsCtx={Map,URLSearchParams,config:{barbeiros:[{id:'a'},{id:'b'},{id:'c'},{id:'d'}]},slug:'loja',api:async url=>{active++;peak=Math.max(active,peak);await Promise.resolve();active--;const id=new URL(url,'https://example.com').searchParams.get('barbeiro_id');return {horarios:id==='a'?['10:00','09:00']:id==='b'?['09:30','09:00']:[]};}};
