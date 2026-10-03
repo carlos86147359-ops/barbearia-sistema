@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+module.exports=async function(){
+ const timers=new Map(),listeners=new Map();let timerId=0,rows=[],shown=[],calls=0,paint=0,message='',redirect=0,resolve;
+ const doc={hidden:false,addEventListener:(k,f)=>listeners.set(k,f),removeEventListener:(k)=>listeners.delete(k)};
+ const win={addEventListener:(k,f)=>listeners.set(k,f),removeEventListener:(k)=>listeners.delete(k)};
+ const ctx={document:doc,window:win,navigator:{onLine:true},AbortController,Date,JSON,Math,setTimeout:(f,ms)=>{timers.set(++timerId,{f,ms});return timerId;},clearTimeout:id=>timers.delete(id)};
+ vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../agenda-live.js'),'utf8')+';this.live=AgendaLive;',ctx);
+ const options={active:()=>true,fetchRows:async()=>{calls++;return rows;},current:()=>shown,render:r=>{shown=r;paint++;},status:t=>message=t,expired:()=>redirect++};
+ const live=ctx.live.start(options);assert.match(message,/10 segundos/);assert.ok([...timers.values()].some(t=>t.ms===10000));
+ rows=[{id:1,status:'agendado'}];await live.refresh();assert.equal(paint,1);await live.refresh();assert.equal(paint,1,'não redesenhar dados idênticos');
+ rows=[{id:1,status:'cancelado'},{id:2,status:'agendado'}];await live.refresh();assert.equal(paint,2);
+ doc.hidden=true;await live.refresh();assert.equal(calls,3);doc.hidden=false;
+ ctx.navigator.onLine=false;await live.refresh();assert.equal(calls,3);assert.match(message,/Sem conexão/);ctx.navigator.onLine=true;
+ await listeners.get('online')();assert.equal(calls,4);
+ const busy=ctx.live.start({...options,fetchRows:()=>{calls++;return new Promise(r=>resolve=r);}});
+ const waiting=busy.refresh();const before=calls;await busy.refresh();assert.equal(calls,before,'somente uma consulta em andamento');resolve(rows);await waiting;
+ const stopped=busy.refresh();busy.stop();resolve([{id:99}]);await stopped;assert.equal(shown[0].id,1,'resposta atrasada não altera painel parado');assert.equal(timers.size,0);
+ const retry=ctx.live.start({...options,fetchRows:async()=>{throw Error('rede');}});await retry.refresh();assert.match(message,/novamente automaticamente/);assert.equal(shown[0].id,1);assert.ok([...timers.values()].some(t=>t.ms===20000));retry.stop();
+ const expired=ctx.live.start({...options,fetchRows:async()=>{throw {status:401};}});await expired.refresh();assert.equal(redirect,1);assert.equal(timers.size,0);assert.equal(listeners.size,0);
+ console.log('OK: agenda automática, novos dados, retomada, falha, sem sobreposição e sessão encerrada.');
+};

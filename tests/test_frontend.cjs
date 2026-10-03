@@ -7,6 +7,7 @@ new vm.Script(fs.readFileSync(path.join(root,'image-upload.js'),'utf8'));
 const route=script.slice(script.indexOf('async function entrada()'),script.indexOf('async function iniciar()'));
 const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.indexOf('function renderPrimeirosPassos('));
 (async()=>{
+  await require('./test_agenda_live.cjs')();
   const mapScript=script.slice(script.indexOf('function shopMapUrl('),script.indexOf('function shopLanding('));
   const mapCtx={URL,encodeURIComponent,config:{endereco:'Rua Teste, 10 & Centro'},esc:s=>String(s),UI:{icon:()=>''}};
   vm.createContext(mapCtx);vm.runInContext(mapScript,mapCtx);
