@@ -47,6 +47,19 @@ with tempfile.TemporaryDirectory() as tmp:
     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(buy,range(2)))
     assert sorted(r.status_code for r in results)==[201,409],[(r.status_code,r.text) for r in results]
     assert client.get('/api/produtos/catalogo').json()[0]['variantes'][0]['quantidade']==0
+    # Respostas repetidas, inclusive simultâneas, registram apenas uma reposição.
+    movement={'variante_id':variant,'tipo':'reposicao','quantidade':2,'motivo':'Novo lote fictício','idempotencia':secrets.token_hex(20)}
+    def replenish(_):return client.post('/api/produtos/estoque',headers=h,json=movement)
+    with ThreadPoolExecutor(max_workers=2) as pool:restocks=list(pool.map(replenish,range(2)))
+    assert all(r.status_code==200 for r in restocks),[(r.status_code,r.text) for r in restocks]
+    assert client.get('/api/produtos/catalogo').json()[0]['variantes'][0]['quantidade']==2
+    edit={'nome':'Pomada atualizada','custo_centavos':1200,'preco_centavos':3500,'variantes':[{'id':variant,'quantidade':2,'quantidade_anterior':2}]}
+    assert buy(0).status_code==201
+    assert client.put('/api/produtos/catalogo/'+product.json()['id'],headers=h,json=edit).status_code==200
+    assert client.get('/api/produtos/catalogo').json()[0]['variantes'][0]['quantidade']==1
+    edit['variantes'][0]['quantidade']=4;edit['motivo']='Inventário fictício'
+    assert client.put('/api/produtos/catalogo/'+product.json()['id'],headers=h,json=edit).status_code==409
+    assert client.get('/api/produtos/catalogo').json()[0]['variantes'][0]['quantidade']==1
     assert client.get('/api/assinatura').json()['status']=='cortesia'
     assert len(client.get('/api/agendamentos').json())==1
     new=client.post('/api/publico/ensaio/agendamentos',json={**payload,'horario':'10:00'})
