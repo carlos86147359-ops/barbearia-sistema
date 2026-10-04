@@ -49,6 +49,7 @@ class Variante(Entrada):
     custo_centavos: int | None=Field(default=None,ge=0,le=100_000_000,strict=True)
     preco_centavos: int | None=Field(default=None,ge=0,le=100_000_000,strict=True)
     quantidade: int=Field(default=0,ge=0,le=1_000_000,strict=True)
+    quantidade_anterior: int | None=Field(default=None,ge=0,le=1_000_000,strict=True)
     estoque_minimo: int=Field(default=0,ge=0,le=1_000_000,strict=True)
     ativo: bool=True
 class Produto(Entrada):
@@ -78,6 +79,7 @@ class Movimento(Entrada):
     quantidade: int=Field(ge=-1_000_000,le=1_000_000,strict=True)
     motivo: str=Field(min_length=2,max_length=250)
     custo_reposicao_centavos: int | None=Field(default=None,ge=0,le=100_000_000,strict=True)
+    idempotencia: str | None=Field(default=None,min_length=20,max_length=100)
 class Cancelamento(Entrada):
     motivo: str=Field(min_length=2,max_length=250)
     devolver_estoque: bool=True
@@ -112,18 +114,18 @@ def instalar(app,c):
         row=db.execute('SELECT v.*,p.nome,p.custo_centavos AS custo_padrao,p.preco_centavos AS preco_padrao,p.ativo AS produto_ativo FROM variantes_produto v JOIN produtos p ON p.loja_id=v.loja_id AND p.id=v.produto_id WHERE v.loja_id=? AND v.id=?',(tenant,vid)).fetchone()
         if not row:raise HTTPException(404,'Produto ou variante não encontrado.')
         return dict(row)
-    def movement(db,user,v,delta,kind,reason,sale=None,cost=None):
+    def movement(db,user,v,delta,kind,reason,sale=None,cost=None,mid=None):
         after=v['quantidade']+delta
         if not 0<=after<=1_000_000:raise HTTPException(409,'Estoque insuficiente ou quantidade acima do limite.')
         db.execute('UPDATE variantes_produto SET quantidade=? WHERE loja_id=? AND id=?',(after,user['loja_id'],v['id']))
-        insert(db,'movimentacoes_estoque',dict(id=ident(),loja_id=user['loja_id'],produto_id=v['produto_id'],variante_id=v['id'],tipo=kind,quantidade=delta,anterior=v['quantidade'],posterior=after,motivo=reason,usuario_id=user['id'],usuario_nome=seller(db,user),criado_em=now(),venda_id=sale,custo_reposicao_centavos=cost))
+        insert(db,'movimentacoes_estoque',dict(id=mid or ident(),loja_id=user['loja_id'],produto_id=v['produto_id'],variante_id=v['id'],tipo=kind,quantidade=delta,anterior=v['quantidade'],posterior=after,motivo=reason,usuario_id=user['id'],usuario_nome=seller(db,user),criado_em=now(),venda_id=sale,custo_reposicao_centavos=cost))
     def sale_view(db,user,p,row):
         result=dict(row);items=[dict(r) for r in db.execute('SELECT * FROM itens_venda WHERE loja_id=? AND venda_id=?',(user['loja_id'],result['id']))]
         result.pop('pedido_hash',None);result.pop('idempotencia',None)
         if not p['ver_custo']:result.pop('custo_centavos',None)
         if p['ver_lucro']:result['lucro_bruto_centavos']=row['total_centavos']-row['custo_centavos'] if row['status']=='confirmada' else 0
         for item in items:
-            if p['ver_lucro']:item['lucro_bruto_centavos']=item['subtotal_centavos']-item['custo_unitario_centavos']*item['quantidade']
+            if p['ver_lucro']:item['lucro_bruto_centavos']=item['subtotal_centavos']-item['custo_unitario_centavos']*item['quantidade'] if row['status']=='confirmada' else 0
             if not p['ver_custo']:item.pop('custo_unitario_centavos',None)
             item['variante_snapshot']=json.loads(item['variante_snapshot'])
         result['itens']=items;return result
@@ -133,7 +135,7 @@ def instalar(app,c):
         with banco() as db:
             u=c['usuario'](request,db);p=permissions(db,u)
             cfg=c['config_da_loja'](db,u['loja_id'])
-            return {'papel':u['papel'],'permissoes':p,'cor_principal':cfg.get('cor_principal','#dfa94d'),'barbearia':cfg['nome']}
+            return {'papel':u['papel'],'usuario_id':u['id'],'permissoes':p,'cor_principal':cfg.get('cor_principal','#dfa94d'),'barbearia':cfg['nome']}
 
     @app.get('/api/produtos/permissoes')
     def lista_permissoes(request:Request):
@@ -195,6 +197,15 @@ def instalar(app,c):
                 if len(kept)!=sum(bool(v['id']) for v in payload['variantes']):raise HTTPException(422,'Não repita a mesma variante.')
                 if kept-set(old):raise HTTPException(404,'Variante não encontrada neste produto.')
                 if any(v['quantidade'] for vid,v in old.items() if vid not in kept):raise HTTPException(422,'Uma variante com estoque não pode ser removida. Ajuste o estoque ou desative o produto.')
+                for v in payload['variantes']:
+                    previous=old.get(v['id'])
+                    if not previous:continue
+                    observed=v['quantidade_anterior']
+                    if observed is not None and v['quantidade']==observed:
+                        # Edição de nome/preço não deve desfazer vendas ou reposições recentes.
+                        v['quantidade']=previous['quantidade']
+                    elif observed!=previous['quantidade'] and v['quantidade']!=previous['quantidade']:
+                        raise HTTPException(409,'O estoque mudou enquanto você editava. Feche e abra o produto novamente antes de alterar a quantidade.')
                 product={k:payload[k] for k in ('nome','categoria','descricao','sku','codigo_barras','imagem_url','custo_centavos','preco_centavos','ativo')};product['ativo']=int(product['ativo'])
                 if existing:db.execute('UPDATE produtos SET '+','.join(k+'=?' for k in product)+' WHERE loja_id=? AND id=?',(*product.values(),u['loja_id'],product_id))
                 else:insert(db,'produtos',dict(id=product_id,loja_id=u['loja_id'],**product,criado_em=now()))
@@ -228,7 +239,15 @@ def instalar(app,c):
         with banco() as db:
             u,p=auth(db,request,'alterar_estoque',True);lock(db,u['loja_id']);u,p=auth(db,request,'alterar_estoque',True)
             if data.custo_reposicao_centavos is not None and not p['ver_custo']:raise HTTPException(403,'Você não pode alterar custos.')
-            v=variant(db,u['loja_id'],data.variante_id);movement(db,u,v,data.quantidade,data.tipo,data.motivo.strip(),cost=data.custo_reposicao_centavos)
+            mid=hashlib.sha256(('estoque:'+u['loja_id']+':'+data.idempotencia).encode()).hexdigest()[:32] if data.idempotencia else None
+            if mid:
+                existing=db.execute('SELECT * FROM movimentacoes_estoque WHERE loja_id=? AND id=?',(u['loja_id'],mid)).fetchone()
+                if existing:
+                    expected=(data.variante_id,data.tipo,data.quantidade,data.motivo.strip(),u['id'],data.custo_reposicao_centavos)
+                    actual=tuple(existing[k] for k in ('variante_id','tipo','quantidade','motivo','usuario_id','custo_reposicao_centavos'))
+                    if actual!=expected:raise HTTPException(409,'Identificador de movimentação já utilizado. Confira o histórico.')
+                    return {'salvo':True}
+            v=variant(db,u['loja_id'],data.variante_id);movement(db,u,v,data.quantidade,data.tipo,data.motivo.strip(),cost=data.custo_reposicao_centavos,mid=mid)
             if data.custo_reposicao_centavos is not None:db.execute('UPDATE variantes_produto SET custo_centavos=? WHERE loja_id=? AND id=?',(data.custo_reposicao_centavos,u['loja_id'],v['id']))
         return {'salvo':True}
 

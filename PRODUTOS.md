@@ -23,3 +23,7 @@ Testes cobrem estoque concorrente, repetição da venda, snapshots, mudança de 
 
 ## Próxima fase
 Abertura/fechamento de caixa, sangria, suprimentos de caixa, fornecedores, compras detalhadas, relatórios avançados, ranking e comissões sobre produtos ficam para uma fase futura. O custo informado na reposição passa a ser o custo padrão daquela variante para vendas seguintes; vendas anteriores usam seu snapshot. Não há custo médio ponderado nesta fase. Imagens de produtos são cadastradas por link HTTPS.
+
+## Revisão de funcionamento
+Edição do produto envia a quantidade observada ao abrir o formulário. Alterações de preço/nome preservam movimentações recentes; alteração intencional de um saldo desatualizado é recusada sem salvar parcialmente o produto. Reposições, perdas, devoluções e ajustes enviados pela interface usam uma chave por operação, impedindo duplicações em tentativas após falha de conexão. A chave reutilizada com outro conteúdo é rejeitada.
+Vendas e movimentações sem resposta confirmada são mantidas na sessão da aba, por usuário, permitindo retomar após recarregamento. Depois de uma confirmação, falha na atualização do catálogo não é apresentada como falha do registro. Conflitos de preço mantêm o pagamento e o desconto para revisão. Lucros de vendas canceladas são zerados também nos itens; preços e custos históricos continuam preservados. Erros no cadastro são exibidos dentro do formulário aberto.
