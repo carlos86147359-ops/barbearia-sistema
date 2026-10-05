@@ -8,6 +8,7 @@ const route=script.slice(script.indexOf('async function entrada()'),script.index
 const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.indexOf('function renderPrimeirosPassos('));
 (async()=>{
   await require('./test_agenda_live.cjs')();
+  await require('./test_panel_ux.cjs')();
   const mapScript=script.slice(script.indexOf('function shopMapUrl('),script.indexOf('function shopLanding('));
   const mapCtx={URL,encodeURIComponent,config:{endereco:'Rua Teste, 10 & Centro'},esc:s=>String(s),UI:{icon:()=>''}};
   vm.createContext(mapCtx);vm.runInContext(mapScript,mapCtx);
@@ -31,10 +32,10 @@ const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.i
   const slots=await slotsCtx.loadBookingAvailability(choice);
   assert.deepEqual([...slots.keys()],['09:00','09:30','10:00']);assert.deepEqual([...slots.get('09:00')],['a','b']);assert.ok(peak<=3);
   const only=await slotsCtx.loadBookingAvailability({...choice,preferencia:'b',barbeiro:{id:'b'}});assert.deepEqual([...only.keys()],['09:00','09:30']);
-  slotsCtx.api=async()=>{throw Error('conexão indisponível');};await assert.rejects(slotsCtx.loadBookingAvailability(choice));
+  slotsCtx.api=async()=>{throw Error('conex�o indispon�vel');};await assert.rejects(slotsCtx.loadBookingAvailability(choice));
   const uiCtx={esc:s=>String(s),document:{body:{style:{setProperty(){}}}}};vm.createContext(uiCtx);vm.runInContext(fs.readFileSync(path.join(root,'design-system.js'),'utf8')+';this.ui=UI;',uiCtx);
   const calendar=uiCtx.ui.calendar({month:'2026-10',selected:'2026-10-05',min:'2026-10-03',max:'2027-04-01',days:[0,1,2,3,4]});
-  assert.match(calendar,/data-date="2026-10-03"[^>]*disabled/);assert.match(calendar,/data-date="2026-10-05"[^>]*aria-pressed="true"/);assert.match(calendar,/aria-label="Mês anterior" disabled/);
+  assert.match(calendar,/data-date="2026-10-03"[^>]*disabled/);assert.match(calendar,/data-date="2026-10-05"[^>]*aria-pressed="true"/);assert.match(calendar,/aria-label="M�s anterior" disabled/);
   for(const status of [200,401,500]){
     let panel=false,form=false;
     const ctx={api:async()=>{if(status!==200)throw {status};},location:{replace:p=>{panel=p==='/painel';}},acesso:()=>{form=true;}};
@@ -69,7 +70,8 @@ const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.i
   let prompted=false;uiEvents.beforeinstallprompt({preventDefault(){},prompt:async()=>prompted=true,userChoice:Promise.resolve({outcome:'dismissed'})});
   await controls['instalar-app'].onclick();assert.equal(prompted,true);assert.equal(controls['instalacao-app'].hidden,false);
   uiEvents.appinstalled();assert.equal(controls['instalacao-app'].hidden,true);
-  console.log('OK: login, progresso, instalação, conexão e nenhuma alteração/API armazenada offline.');
+  console.log('OK: login, progresso, instala��o, conex�o e nenhuma altera��o/API armazenada offline.');
 })().catch(err=>{console.error(err);process.exitCode=1;});
 
 require('./test_produtos_frontend.cjs');
+

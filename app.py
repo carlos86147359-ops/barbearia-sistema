@@ -76,7 +76,10 @@ def iniciar():
         demo = padrao()
         db.execute('INSERT INTO lojas (id,slug,configuracao) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING', ('demo','barbearia',json.dumps(demo)))
         for row in db.execute('SELECT * FROM agendamentos WHERE inicio IS NULL OR barbeiro_id IS NULL').fetchall():
-            inicio = row['inicio'] or datetime.strptime(row['data_hora'],'%Y-%m-%d às %H:%M').isoformat(timespec='minutes')
+            legacy = row['data_hora']
+            date_part = legacy[:10]
+            time_part = legacy[-5:]
+            inicio = row['inicio'] or datetime.fromisoformat(f'{date_part}T{time_part}').isoformat(timespec='minutes')
             barber = next((b['id'] for b in demo['barbeiros'] if b['nome']==row['barbeiro_nome']), 'antigo-'+str(row['id']))
             service = next((s for s in demo['servicos'] if s['nome']==row['servico_nome']), None)
             db.execute('UPDATE agendamentos SET inicio=?, barbeiro_id=?, servico_id=? WHERE id=?', (inicio,barber,service['id'] if service else None,row['id']))
@@ -622,6 +625,15 @@ def health():
 
 @app.head('/')
 def head(): return None
+
+@app.get('/workspace.css')
+def workspace_css(): return FileResponse(ROOT/'workspace.css',media_type='text/css')
+
+@app.get('/app-shell.js')
+def app_shell_js(): return FileResponse(ROOT/'app-shell.js',media_type='application/javascript')
+
+@app.get('/panel-ux.js')
+def panel_ux_js(): return FileResponse(ROOT/'panel-ux.js',media_type='application/javascript')
 
 @app.get('/design-system.css')
 def design_css(): return FileResponse(ROOT/'design-system.css',media_type='text/css')
