@@ -1,4 +1,4 @@
-"""Agenda de barbearias com contas, configuração e isolamento por estabelecimento."""
+"""Agenda de barbearias com contas, configura��o e isolamento por estabelecimento."""
 import calendar
 import hashlib
 import hmac
@@ -47,7 +47,7 @@ def banco():
         finally: db.close()
 
 def padrao():
-    return {'nome':'Barbearia de demonstração', 'whatsapp':'', 'comissao':50,
+    return {'nome':'Barbearia de demonstra��o', 'whatsapp':'', 'comissao':50,
             'barbeiros':[{'id':'carlos','nome':'Carlos Henrique'}, {'id':'marcos','nome':'Marcos Silva'}, {'id':'diego','nome':'Diego Barba'}],
             'servicos':[{'id':'corte','nome':'Corte Cabelo Fade','preco':65,'duracao':60}, {'id':'barba','nome':'Barboterapia Completa','preco':50,'duracao':60}, {'id':'combo','nome':'Combo Cabelo + Barba','preco':105,'duracao':120}],
             'dias':[0,1,2,3,4,5,6], 'periodos':[{'inicio':'09:00','fim':'12:00'}, {'inicio':'14:00','fim':'19:00'}], 'intervalo':30}
@@ -76,7 +76,7 @@ def iniciar():
         demo = padrao()
         db.execute('INSERT INTO lojas (id,slug,configuracao) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING', ('demo','barbearia',json.dumps(demo)))
         for row in db.execute('SELECT * FROM agendamentos WHERE inicio IS NULL OR barbeiro_id IS NULL').fetchall():
-            inicio = row['inicio'] or datetime.strptime(row['data_hora'],'%Y-%m-%d às %H:%M').isoformat(timespec='minutes')
+            inicio = row['inicio'] or datetime.strptime(row['data_hora'],'%Y-%m-%d �s %H:%M').isoformat(timespec='minutes')
             barber = next((b['id'] for b in demo['barbeiros'] if b['nome']==row['barbeiro_nome']), 'antigo-'+str(row['id']))
             service = next((s for s in demo['servicos'] if s['nome']==row['servico_nome']), None)
             db.execute('UPDATE agendamentos SET inicio=?, barbeiro_id=?, servico_id=? WHERE id=?', (inicio,barber,service['id'] if service else None,row['id']))
@@ -89,12 +89,12 @@ app = FastAPI(title='BarberSaaS', version='2.0.0', docs_url=None if CLOUD else '
 
 @app.middleware('http')
 async def protecoes(request: Request, call_next):
-    # Os formulários legítimos usam a mesma origem. Evita alterações por outros sites.
+    # Os formul�rios leg�timos usam a mesma origem. Evita altera��es por outros sites.
     if request.method in ('POST','PATCH','PUT','DELETE'):
         origin = request.headers.get('origin')
         expected = os.environ.get('PUBLIC_BASE_URL', str(request.base_url).rstrip('/'))
         if origin and origin.rstrip('/') != expected:
-            return Response('Origem inválida.', status_code=403)
+            return Response('Origem inv�lida.', status_code=403)
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'same-origin'
@@ -114,7 +114,7 @@ def confere_senha(password, stored):
 
 def limite(db, request, action, maximum, seconds=900):
     ip = request.client.host if request.client else 'local'
-    # Render fornece o IP do cliente no cabeçalho de proxy.
+    # Render fornece o IP do cliente no cabe�alho de proxy.
     if CLOUD: ip = request.headers.get('x-forwarded-for',ip).split(',')[0].strip()
     key = hashlib.sha256((action+':'+ip).encode()).hexdigest()
     window = int(time.time()) // seconds
@@ -137,7 +137,7 @@ def usuario(request, db, change=False):
         row=None
     if not row: raise HTTPException(401,'Entre na sua conta para acessar o painel.')
     if change and not hmac.compare_digest(row['csrf'],request.headers.get('x-csrf-token','')):
-        raise HTTPException(403,'Atualize a página e tente novamente.')
+        raise HTTPException(403,'Atualize a p�gina e tente novamente.')
     return dict(row)
 
 def dono(request,db,change=False):
@@ -163,26 +163,26 @@ class Cadastro(Acesso):
 
 def email_valido(email):
     email=email.strip().lower()
-    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email): raise HTTPException(422,'Informe um e-mail válido.')
+    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email): raise HTTPException(422,'Informe um e-mail v�lido.')
     return email
 
 @app.post('/api/cadastro',status_code=201)
 def cadastrar(data: Cadastro, request: Request, response: Response, background: BackgroundTasks):
-    if not data.aceite_termos: raise HTTPException(422,'Leia e aceite os termos de uso e a política de privacidade para criar a conta.')
+    if not data.aceite_termos: raise HTTPException(422,'Leia e aceite os termos de uso e a pol�tica de privacidade para criar a conta.')
     limitar(request,'cadastro',10,3600)
     email=email_valido(data.email)
     if eh_admin({'email':email}):
-        raise HTTPException(409,'Esta conta está reservada para administração. Use Entrar.')
+        raise HTTPException(409,'Esta conta est� reservada para administra��o. Use Entrar.')
     slug=data.slug.strip().lower()
-    if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*',slug): raise HTTPException(422,'Use letras minúsculas, números e hífens no endereço.')
+    if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*',slug): raise HTTPException(422,'Use letras min�sculas, n�meros e h�fens no endere�o.')
     shop_id,user_id=secrets.token_hex(16),secrets.token_hex(16)
     config={'nome':data.nome.strip(),'whatsapp':'','comissao':50,'barbeiros':[],'servicos':[],'dias':[0,1,2,3,4,5],'periodos':[{'inicio':'09:00','fim':'19:00'}],'intervalo':30}
     if len(config['nome'])<2: raise HTTPException(422,'Informe o nome da barbearia.')
     with banco() as db:
         if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
         else: db.execute('BEGIN IMMEDIATE')
-        if db.execute('SELECT id FROM funcionarios WHERE email=?',(email,)).fetchone() or db.execute('SELECT id FROM usuarios WHERE email=?',(email,)).fetchone(): raise HTTPException(409,'Esse e-mail já possui conta. Use Entrar.')
-        if db.execute('SELECT id FROM lojas WHERE slug=?',(slug,)).fetchone(): raise HTTPException(409,'Esse endereço já está em uso. Escolha outro.')
+        if db.execute('SELECT id FROM funcionarios WHERE email=?',(email,)).fetchone() or db.execute('SELECT id FROM usuarios WHERE email=?',(email,)).fetchone(): raise HTTPException(409,'Esse e-mail j� possui conta. Use Entrar.')
+        if db.execute('SELECT id FROM lojas WHERE slug=?',(slug,)).fetchone(): raise HTTPException(409,'Esse endere�o j� est� em uso. Escolha outro.')
         db.execute('INSERT INTO lojas(id,slug,configuracao) VALUES(?,?,?)',(shop_id,slug,json.dumps(config)))
         db.execute('INSERT INTO usuarios(id,loja_id,email,senha) VALUES(?,?,?,?)',(user_id,shop_id,email,hash_senha(data.senha)))
         registrar_aceite(db,user_id)
@@ -241,13 +241,13 @@ def assinatura(db,shop_id):
     return {'ativa':active or not cobranca_ativa() or shop_id=='demo', 'status':'ativa' if active else 'vencida' if due else 'aguardando_pagamento', 'vencimento':due,'valor':90,'cobranca_ativa':cobranca_ativa()}
 
 def exigir_assinatura(db,shop_id):
-    if not assinatura(db,shop_id)['ativa']: raise HTTPException(403,'Esta agenda está temporariamente indisponível. Fale com a barbearia.')
+    if not assinatura(db,shop_id)['ativa']: raise HTTPException(403,'Esta agenda est� temporariamente indispon�vel. Fale com a barbearia.')
 
 @app.post('/api/gestao/minha-cortesia')
 def minha_cortesia(request: Request):
     with banco() as db:
         user=administrador(request,db,True)
-        db.execute('INSERT INTO cortesias(loja_id,administrador_id,criado_em,motivo) VALUES(?,?,?,?) ON CONFLICT(loja_id) DO NOTHING',(user['loja_id'],user['id'],datetime.now(BRASIL).isoformat(timespec='seconds'),'Conta do proprietário do SaaS'))
+        db.execute('INSERT INTO cortesias(loja_id,administrador_id,criado_em,motivo) VALUES(?,?,?,?) ON CONFLICT(loja_id) DO NOTHING',(user['loja_id'],user['id'],datetime.now(BRASIL).isoformat(timespec='seconds'),'Conta do propriet�rio do SaaS'))
         return assinatura(db,user['loja_id'])
 
 @app.get('/api/assinatura')
@@ -277,8 +277,8 @@ def confirmar_pix(shop_id: str,data: ConfirmacaoPix,request: Request):
         user=administrador(request,db,True)
         if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821602,))
         else: db.execute('BEGIN IMMEDIATE')
-        if not db.execute('SELECT id FROM usuarios WHERE loja_id=?',(shop_id,)).fetchone(): raise HTTPException(404,'Barbearia não encontrada.')
-        if db.execute('SELECT id FROM pagamentos WHERE referencia=?',(reference,)).fetchone(): raise HTTPException(409,'Este Pix já foi confirmado. Nenhum mês foi acrescentado.')
+        if not db.execute('SELECT id FROM usuarios WHERE loja_id=?',(shop_id,)).fetchone(): raise HTTPException(404,'Barbearia n�o encontrada.')
+        if db.execute('SELECT id FROM pagamentos WHERE referencia=?',(reference,)).fetchone(): raise HTTPException(409,'Este Pix j� foi confirmado. Nenhum m�s foi acrescentado.')
         previous=assinatura(db,shop_id)['vencimento']
         start=max(now,datetime.fromisoformat(previous)) if previous else now
         month=start.month%12+1
@@ -303,16 +303,16 @@ class ConviteNovo(BaseModel):
 @app.post('/api/equipe/{barber_id}/convite',status_code=201)
 def convidar(barber_id: str,data: ConviteNovo,request: Request):
     email=email_valido(data.email)
-    if eh_admin({'email':email}): raise HTTPException(409,'Use o e-mail pessoal do profissional, não a conta administrativa.')
+    if eh_admin({'email':email}): raise HTTPException(409,'Use o e-mail pessoal do profissional, n�o a conta administrativa.')
     raw=secrets.token_urlsafe(32)
     with banco() as db:
         if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
         else: db.execute('BEGIN IMMEDIATE')
         user=dono(request,db,True)
-        if not any(b['id']==barber_id for b in config_da_loja(db,user['loja_id'])['barbeiros']): raise HTTPException(404,'Salve o profissional nas configurações antes de convidar.')
-        if db.execute('SELECT id FROM usuarios WHERE email=?',(email,)).fetchone(): raise HTTPException(409,'Esse e-mail já pertence a um dono de barbearia.')
+        if not any(b['id']==barber_id for b in config_da_loja(db,user['loja_id'])['barbeiros']): raise HTTPException(404,'Salve o profissional nas configura��es antes de convidar.')
+        if db.execute('SELECT id FROM usuarios WHERE email=?',(email,)).fetchone(): raise HTTPException(409,'Esse e-mail j� pertence a um dono de barbearia.')
         row=db.execute('SELECT * FROM funcionarios WHERE email=?',(email,)).fetchone()
-        if row and (row['loja_id']!=user['loja_id'] or row['barbeiro_id']!=barber_id): raise HTTPException(409,'Esse e-mail já possui outro acesso.')
+        if row and (row['loja_id']!=user['loja_id'] or row['barbeiro_id']!=barber_id): raise HTTPException(409,'Esse e-mail j� possui outro acesso.')
         db.execute('DELETE FROM convites WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],barber_id))
         db.execute('INSERT INTO convites(token,loja_id,barbeiro_id,email,expira) VALUES(?,?,?,?,?)',(hashlib.sha256(raw.encode()).hexdigest(),user['loja_id'],barber_id,email,int(time.time())+7*86400))
     return {'link':'/convite#'+raw,'validade_dias':7}
@@ -335,10 +335,10 @@ class TokenConvite(BaseModel):
 
 def convite_valido(db,token):
     row=db.execute('SELECT * FROM convites WHERE token=? AND expira>?',(hashlib.sha256(token.encode()).hexdigest(),int(time.time()))).fetchone()
-    if not row: raise HTTPException(410,'Convite inválido, expirado ou já utilizado. Peça outro ao dono.')
+    if not row: raise HTTPException(410,'Convite inv�lido, expirado ou j� utilizado. Pe�a outro ao dono.')
     config=config_da_loja(db,row['loja_id'])
     barber=next((b for b in config['barbeiros'] if b['id']==row['barbeiro_id']),None)
-    if not barber: raise HTTPException(410,'Este profissional não está mais cadastrado.')
+    if not barber: raise HTTPException(410,'Este profissional n�o est� mais cadastrado.')
     return row,config,barber
 
 @app.post('/api/convite/info')
@@ -357,9 +357,9 @@ def aceitar_convite(data: AceitarConvite,request: Request,response: Response):
         if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
         else: db.execute('BEGIN IMMEDIATE')
         row,config,barber=convite_valido(db,data.token)
-        if eh_admin({'email':row['email']}) or db.execute('SELECT id FROM usuarios WHERE email=?',(row['email'],)).fetchone(): raise HTTPException(409,'Esse e-mail já está em uso. Peça outro convite ao dono.')
+        if eh_admin({'email':row['email']}) or db.execute('SELECT id FROM usuarios WHERE email=?',(row['email'],)).fetchone(): raise HTTPException(409,'Esse e-mail j� est� em uso. Pe�a outro convite ao dono.')
         other=db.execute('SELECT * FROM funcionarios WHERE email=?',(row['email'],)).fetchone()
-        if other and (other['loja_id']!=row['loja_id'] or other['barbeiro_id']!=row['barbeiro_id']): raise HTTPException(409,'Esse e-mail já possui outro acesso.')
+        if other and (other['loja_id']!=row['loja_id'] or other['barbeiro_id']!=row['barbeiro_id']): raise HTTPException(409,'Esse e-mail j� possui outro acesso.')
         existing=db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND barbeiro_id=?',(row['loja_id'],row['barbeiro_id'])).fetchone()
         uid=existing['id'] if existing else secrets.token_hex(16)
         if existing:
@@ -427,7 +427,7 @@ def salvar_config(data: Configuracao,request: Request):
                 valid=parsed.scheme=='https' and bool(parsed.hostname) and not parsed.username and not parsed.password and not any(c.isspace() for c in value)
                 if field=='instagram': valid=valid and parsed.hostname in ('instagram.com','www.instagram.com')
             except ValueError: valid=False
-            if not valid: raise HTTPException(422,'Use links HTTPS válidos para logo, capa e perfil do Instagram.')
+            if not valid: raise HTTPException(422,'Use links HTTPS v�lidos para logo, capa e perfil do Instagram.')
         config[field]=value
     value=config['localizacao_url'].strip()
     if value:
@@ -459,7 +459,7 @@ def salvar_config(data: Configuracao,request: Request):
         if len({v['id'] for v in values}) != len(values) or any(len(v['nome'].strip())<2 for v in values): raise HTTPException(422,'Confira os nomes e os itens duplicados.')
         for v in values: v['nome']=v['nome'].strip()
     periods=sorted(config['periodos'],key=lambda p:p['inicio'])
-    if not periods or any(p['inicio']>=p['fim'] for p in periods) or any(a['fim']>b['inicio'] for a,b in zip(periods,periods[1:])): raise HTTPException(422,'Os períodos devem ter início antes do fim e não podem se sobrepor.')
+    if not periods or any(p['inicio']>=p['fim'] for p in periods) or any(a['fim']>b['inicio'] for a,b in zip(periods,periods[1:])): raise HTTPException(422,'Os per�odos devem ter in�cio antes do fim e n�o podem se sobrepor.')
     config['periodos']=periods
     with banco() as db:
         if DATABASE_URL: db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
@@ -467,7 +467,7 @@ def salvar_config(data: Configuracao,request: Request):
         user=dono(request,db,True)
         kept={b['id'] for b in config['barbeiros']}
         old=config_da_loja(db,user['loja_id'])
-        # Clientes antigos da API continuam preservando a identidade já configurada.
+        # Clientes antigos da API continuam preservando a identidade j� configurada.
         for field in ('logo_url','capa_url','cor_principal','endereco','instagram','localizacao_url'):
             if field not in data.model_fields_set and field in old: config[field]=old[field]
         for b in old['barbeiros']:
@@ -482,7 +482,7 @@ def salvar_config(data: Configuracao,request: Request):
 
 def loja_publica(db,slug):
     shop=db.execute('SELECT * FROM lojas WHERE slug=?',(slug,)).fetchone()
-    if not shop: raise HTTPException(404,'Barbearia não encontrada.')
+    if not shop: raise HTTPException(404,'Barbearia n�o encontrada.')
     return shop,json.loads(shop['configuracao'])
 
 @app.get('/api/publico/{slug}/configuracao')
@@ -495,14 +495,14 @@ def publico(slug: str):
 def escolher(config,barber_id,service_id):
     barber=next((b for b in config['barbeiros'] if b['id']==barber_id),None)
     service=next((s for s in config['servicos'] if s['id']==service_id),None)
-    if not barber or not service: raise HTTPException(422,'Escolha um profissional e um serviço disponíveis.')
+    if not barber or not service: raise HTTPException(422,'Escolha um profissional e um servi�o dispon�veis.')
     return barber,service
 
 def inicio_valido(config,day,hour,duration):
     try: start=datetime.fromisoformat(f'{day.isoformat()}T{hour}')
-    except ValueError: raise HTTPException(422,'Horário inválido.')
-    if not re.fullmatch(r'\d{2}:\d{2}',hour): raise HTTPException(422,'Horário inválido.')
-    if day.weekday() not in config['dias']: raise HTTPException(422,'A barbearia não abre nesse dia.')
+    except ValueError: raise HTTPException(422,'Hor�rio inv�lido.')
+    if not re.fullmatch(r'\d{2}:\d{2}',hour): raise HTTPException(422,'Hor�rio inv�lido.')
+    if day.weekday() not in config['dias']: raise HTTPException(422,'A barbearia n�o abre nesse dia.')
     end=start+timedelta(minutes=duration)
     valid=False
     for p in config['periodos']:
@@ -510,9 +510,9 @@ def inicio_valido(config,day,hour,duration):
         b=datetime.fromisoformat(f"{day}T{p['fim']}")
         offset=int((start-a).total_seconds()//60)
         if a<=start and end<=b and offset%config['intervalo']==0: valid=True
-    if not valid: raise HTTPException(422,'O serviço não cabe nesse horário de funcionamento.')
-    if start.replace(tzinfo=BRASIL)<=datetime.now(BRASIL): raise HTTPException(422,'Escolha um horário futuro.')
-    if day>datetime.now(BRASIL).date()+timedelta(days=180): raise HTTPException(422,'Agende com no máximo 180 dias de antecedência.')
+    if not valid: raise HTTPException(422,'O servi�o n�o cabe nesse hor�rio de funcionamento.')
+    if start.replace(tzinfo=BRASIL)<=datetime.now(BRASIL): raise HTTPException(422,'Escolha um hor�rio futuro.')
+    if day>datetime.now(BRASIL).date()+timedelta(days=180): raise HTTPException(422,'Agende com no m�ximo 180 dias de anteced�ncia.')
     return start
 
 def ocupado(db,shop_id,barber_id,start,duration,ignore=0):
@@ -561,27 +561,27 @@ def criar(slug: str,data: Reserva,request: Request):
         # Em SQLite o bloqueio deve vir antes da leitura; no PostgreSQL isolamos por loja e profissional.
         if not DATABASE_URL: db.execute('BEGIN IMMEDIATE')
         shop,config=loja_publica(db,slug)
-        if shop['id']=='demo': raise HTTPException(400,'Esta é uma demonstração. Crie uma conta para abrir sua própria agenda.')
+        if shop['id']=='demo': raise HTTPException(400,'Esta � uma demonstra��o. Crie uma conta para abrir sua pr�pria agenda.')
         exigir_assinatura(db,shop['id'])
         barber,service=escolher(config,data.barbeiro_id,data.servico_id)
         if DATABASE_URL: travar(db,shop['id'],barber['id'])
         start=inicio_valido(config,data.data,data.horario,service['duracao'])
-        if ocupado(db,shop['id'],barber['id'],start,service['duracao']): raise HTTPException(409,'Esse horário acabou de ser reservado. Escolha outro.')
+        if ocupado(db,shop['id'],barber['id'],start,service['duracao']): raise HTTPException(409,'Esse hor�rio acabou de ser reservado. Escolha outro.')
         sql='''INSERT INTO agendamentos(cliente_nome,cliente_telefone,barbeiro_nome,servico_nome,data_hora,preco,criado_em,status,inicio,duracao_minutos,loja_id,barbeiro_id,servico_id,comissao_pct)
             VALUES(?,?,?,?,?,?,?,'agendado',?,?,?,?,?,?)'''
         if DATABASE_URL: sql+=' RETURNING id'
-        cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} às {data.horario}',float(service['preco']),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
+        cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} �s {data.horario}',float(service['preco']),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
         reservation_id=cur.fetchone()['id'] if DATABASE_URL else cur.lastrowid
         management=criar_link_cliente(db,reservation_id)
-    message=(f"Olá! Fiz um agendamento pelo aplicativo.\n\n"
+    message=(f"Ol�! Fiz um agendamento pelo aplicativo.\n\n"
              f"*Meu agendamento*\n"
              f"*Cliente:* {name}\n"
              f"*Barbearia:* {config['nome']}\n"
-             f"*Serviço:* {service['nome']}\n"
+             f"*Servi�o:* {service['nome']}\n"
              f"*Profissional:* {barber['nome']}\n"
              f"*Data:* {data.data.strftime('%d/%m/%Y')}\n"
-             f"*Horário:* {data.horario}\n\n"
-             f"Reserva #{reservation_id}. Até lá!")
+             f"*Hor�rio:* {data.horario}\n\n"
+             f"Reserva #{reservation_id}. At� l�!")
     professional_phone=barber.get('whatsapp','')
     store_phone=professional_phone or config['whatsapp']
     if len(store_phone) in (10,11): store_phone='55'+store_phone
@@ -600,18 +600,18 @@ class Situacao(BaseModel):
 
 @app.patch('/api/agendamentos/{reservation_id}')
 def alterar(reservation_id: int,data: Situacao,request: Request):
-    if data.status not in ('agendado','concluido','cancelado'): raise HTTPException(422,'Situação inválida.')
+    if data.status not in ('agendado','concluido','cancelado'): raise HTTPException(422,'Situa��o inv�lida.')
     with banco() as db:
         if not DATABASE_URL: db.execute('BEGIN IMMEDIATE')
         user=usuario(request,db,True)
         row=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(reservation_id,user['loja_id'])).fetchone()
-        if not row or (user['papel']=='barbeiro' and row['barbeiro_id']!=user['barbeiro_id']): raise HTTPException(404,'Agendamento não encontrado.')
-        if user['papel']=='barbeiro' and (data.status!='concluido' or row['status']!='agendado'): raise HTTPException(403,'Você pode concluir seus atendimentos agendados. Peça ao dono para cancelar ou reabrir.')
+        if not row or (user['papel']=='barbeiro' and row['barbeiro_id']!=user['barbeiro_id']): raise HTTPException(404,'Agendamento n�o encontrado.')
+        if user['papel']=='barbeiro' and (data.status!='concluido' or row['status']!='agendado'): raise HTTPException(403,'Voc� pode concluir seus atendimentos agendados. Pe�a ao dono para cancelar ou reabrir.')
         if DATABASE_URL:
             travar(db,user['loja_id'],row['barbeiro_id'])
             row=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(reservation_id,user['loja_id'])).fetchone()
-            if user['papel']=='barbeiro' and row['status']!='agendado': raise HTTPException(409,'A situação deste atendimento mudou. Atualize sua agenda.')
-        if row['status']=='cancelado' and data.status!='cancelado' and ocupado(db,user['loja_id'],row['barbeiro_id'],datetime.fromisoformat(row['inicio']),row['duracao_minutos'],reservation_id): raise HTTPException(409,'Esse horário já foi ocupado por outra reserva.')
+            if user['papel']=='barbeiro' and row['status']!='agendado': raise HTTPException(409,'A situa��o deste atendimento mudou. Atualize sua agenda.')
+        if row['status']=='cancelado' and data.status!='cancelado' and ocupado(db,user['loja_id'],row['barbeiro_id'],datetime.fromisoformat(row['inicio']),row['duracao_minutos'],reservation_id): raise HTTPException(409,'Esse hor�rio j� foi ocupado por outra reserva.')
         db.execute('UPDATE agendamentos SET status=? WHERE id=? AND loja_id=?',(data.status,reservation_id,user['loja_id']))
     return {'status':data.status}
 
@@ -622,6 +622,15 @@ def health():
 
 @app.head('/')
 def head(): return None
+
+@app.get('/workspace.css')
+def workspace_css(): return FileResponse(ROOT/'workspace.css',media_type='text/css')
+
+@app.get('/app-shell.js')
+def app_shell_js(): return FileResponse(ROOT/'app-shell.js',media_type='application/javascript')
+
+@app.get('/panel-ux.js')
+def panel_ux_js(): return FileResponse(ROOT/'panel-ux.js',media_type='application/javascript')
 
 @app.get('/design-system.css')
 def design_css(): return FileResponse(ROOT/'design-system.css',media_type='text/css')
@@ -656,7 +665,7 @@ def pagina(): return (ROOT/'index.html').read_text(encoding='utf-8')
 from pwa import instalar as instalar_pwa
 instalar_pwa(app, ROOT)
 
-# Os recursos adicionais usam as mesmas sessões e transações do núcleo.
+# Os recursos adicionais usam as mesmas sess�es e transa��es do n�cleo.
 import importlib.util as _importlib
 _spec=_importlib.spec_from_file_location("recursos_barber",ROOT / "recursos.py")
 _recursos=_importlib.module_from_spec(_spec)
@@ -668,3 +677,4 @@ instalar_imagens(app,globals())
 
 from produtos import instalar as instalar_produtos
 instalar_produtos(app,globals())
+

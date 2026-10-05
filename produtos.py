@@ -103,7 +103,7 @@ def instalar(app,c):
         return {k:bool(data.get(k,False)) for k in PERMISSIONS}
     def auth(db,request,permission='acessar_pdv',change=False,owner=False):
         user=c['usuario'](request,db,change);p=permissions(db,user)
-        if (owner and user['papel']!='dono') or not p['acessar_pdv'] or not p.get(permission,False):raise HTTPException(403,'Você não tem permissão para esta ação em Produtos e Caixa.')
+        if (owner and user['papel']!='dono') or not p['acessar_pdv'] or not p.get(permission,False):raise HTTPException(403,'Voc� n�o tem permiss�o para esta a��o em Produtos e Caixa.')
         return user,p
     def seller(db,user):
         cfg=c['config_da_loja'](db,user['loja_id'])
@@ -112,7 +112,7 @@ def instalar(app,c):
         cols=list(data);db.execute('INSERT INTO '+table+' ('+','.join(cols)+') VALUES ('+','.join('?' for _ in cols)+')',tuple(data.values()))
     def variant(db,tenant,vid):
         row=db.execute('SELECT v.*,p.nome,p.custo_centavos AS custo_padrao,p.preco_centavos AS preco_padrao,p.ativo AS produto_ativo FROM variantes_produto v JOIN produtos p ON p.loja_id=v.loja_id AND p.id=v.produto_id WHERE v.loja_id=? AND v.id=?',(tenant,vid)).fetchone()
-        if not row:raise HTTPException(404,'Produto ou variante não encontrado.')
+        if not row:raise HTTPException(404,'Produto ou variante n�o encontrado.')
         return dict(row)
     def movement(db,user,v,delta,kind,reason,sale=None,cost=None,mid=None):
         after=v['quantidade']+delta
@@ -135,7 +135,7 @@ def instalar(app,c):
         with banco() as db:
             u=c['usuario'](request,db);p=permissions(db,u)
             cfg=c['config_da_loja'](db,u['loja_id'])
-            return {'papel':u['papel'],'usuario_id':u['id'],'permissoes':p,'cor_principal':cfg.get('cor_principal','#dfa94d'),'barbearia':cfg['nome']}
+            return {'papel':u['papel'],'usuario_id':u['id'],'permissoes':p,'cor_principal':cfg.get('cor_principal','#dfa94d'),'barbearia':cfg['nome'],'logo_url':cfg.get('logo_url','')}
 
     @app.get('/api/produtos/permissoes')
     def lista_permissoes(request:Request):
@@ -145,13 +145,13 @@ def instalar(app,c):
 
     @app.put('/api/produtos/permissoes/{uid}')
     def autorizar(uid:str,data:Permissoes,request:Request):
-        if set(data.permissoes)-set(PERMISSIONS):raise HTTPException(422,'Permissão não reconhecida.')
+        if set(data.permissoes)-set(PERMISSIONS):raise HTTPException(422,'Permiss�o n�o reconhecida.')
         p=dict.fromkeys(PERMISSIONS,False);p.update(data.permissoes)
-        if p['ver_lucro'] and not p['ver_custo']:raise HTTPException(422,'Visualizar lucro também requer visualizar custo.')
-        if any(v for k,v in p.items() if k!='acessar_pdv') and not p['acessar_pdv']:raise HTTPException(422,'Ative o acesso ao módulo antes de conceder outras permissões.')
+        if p['ver_lucro'] and not p['ver_custo']:raise HTTPException(422,'Visualizar lucro tamb�m requer visualizar custo.')
+        if any(v for k,v in p.items() if k!='acessar_pdv') and not p['acessar_pdv']:raise HTTPException(422,'Ative o acesso ao m�dulo antes de conceder outras permiss�es.')
         with banco() as db:
             u=c['dono'](request,db,True);lock(db,u['loja_id']);u=c['dono'](request,db,True)
-            if not db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND id=? AND ativo=1',(u['loja_id'],uid)).fetchone():raise HTTPException(404,'Profissional não encontrado.')
+            if not db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND id=? AND ativo=1',(u['loja_id'],uid)).fetchone():raise HTTPException(404,'Profissional n�o encontrado.')
             db.execute('INSERT INTO permissoes_caixa(id,loja_id,funcionario_id,permissoes,atualizado_por,atualizado_em) VALUES(?,?,?,?,?,?) ON CONFLICT(loja_id,funcionario_id) DO UPDATE SET permissoes=excluded.permissoes,atualizado_por=excluded.atualizado_por,atualizado_em=excluded.atualizado_em',(ident(),u['loja_id'],uid,json.dumps(p),u['id'],now()))
         return p
 
@@ -180,32 +180,32 @@ def instalar(app,c):
             try:
                 url=urlsplit(payload['imagem_url']);valid=url.scheme=='https' and bool(url.hostname) and not url.username and not url.password and not any(c.isspace() for c in payload['imagem_url'])
             except ValueError:valid=False
-            if not valid:raise HTTPException(422,'Use um link HTTPS válido para a imagem do produto.')
+            if not valid:raise HTTPException(422,'Use um link HTTPS v�lido para a imagem do produto.')
         attrs=[]
         for v in payload['variantes']:
             a={k.strip():val.strip() for k,val in v['atributos'].items()}
             if any(not k or not val or len(k)>40 or len(val)>80 for k,val in a.items()):raise HTTPException(422,'Confira os atributos das variantes.')
             attrs.append(json.dumps(a,ensure_ascii=False,sort_keys=True))
-        if len(set(attrs))!=len(attrs):raise HTTPException(422,'Não repita a mesma combinação de variante.')
+        if len(set(attrs))!=len(attrs):raise HTTPException(422,'N�o repita a mesma combina��o de variante.')
         try:
             with banco() as db:
                 u,p=auth(db,request,change=True,owner=True);lock(db,u['loja_id']);u,p=auth(db,request,change=True,owner=True)
                 existing=db.execute('SELECT * FROM produtos WHERE loja_id=? AND id=?',(u['loja_id'],pid)).fetchone() if pid else None
-                if pid and not existing:raise HTTPException(404,'Produto não encontrado.')
+                if pid and not existing:raise HTTPException(404,'Produto n�o encontrado.')
                 product_id=pid or ident();old={r['id']:dict(r) for r in db.execute('SELECT * FROM variantes_produto WHERE loja_id=? AND produto_id=?',(u['loja_id'],product_id))}
                 kept={v['id'] for v in payload['variantes'] if v['id']}
-                if len(kept)!=sum(bool(v['id']) for v in payload['variantes']):raise HTTPException(422,'Não repita a mesma variante.')
-                if kept-set(old):raise HTTPException(404,'Variante não encontrada neste produto.')
-                if any(v['quantidade'] for vid,v in old.items() if vid not in kept):raise HTTPException(422,'Uma variante com estoque não pode ser removida. Ajuste o estoque ou desative o produto.')
+                if len(kept)!=sum(bool(v['id']) for v in payload['variantes']):raise HTTPException(422,'N�o repita a mesma variante.')
+                if kept-set(old):raise HTTPException(404,'Variante n�o encontrada neste produto.')
+                if any(v['quantidade'] for vid,v in old.items() if vid not in kept):raise HTTPException(422,'Uma variante com estoque n�o pode ser removida. Ajuste o estoque ou desative o produto.')
                 for v in payload['variantes']:
                     previous=old.get(v['id'])
                     if not previous:continue
                     observed=v['quantidade_anterior']
                     if observed is not None and v['quantidade']==observed:
-                        # Edição de nome/preço não deve desfazer vendas ou reposições recentes.
+                        # Edi��o de nome/pre�o n�o deve desfazer vendas ou reposi��es recentes.
                         v['quantidade']=previous['quantidade']
                     elif observed!=previous['quantidade'] and v['quantidade']!=previous['quantidade']:
-                        raise HTTPException(409,'O estoque mudou enquanto você editava. Feche e abra o produto novamente antes de alterar a quantidade.')
+                        raise HTTPException(409,'O estoque mudou enquanto voc� editava. Feche e abra o produto novamente antes de alterar a quantidade.')
                 product={k:payload[k] for k in ('nome','categoria','descricao','sku','codigo_barras','imagem_url','custo_centavos','preco_centavos','ativo')};product['ativo']=int(product['ativo'])
                 if existing:db.execute('UPDATE produtos SET '+','.join(k+'=?' for k in product)+' WHERE loja_id=? AND id=?',(*product.values(),u['loja_id'],product_id))
                 else:insert(db,'produtos',dict(id=product_id,loja_id=u['loja_id'],**product,criado_em=now()))
@@ -214,16 +214,16 @@ def instalar(app,c):
                 for v,a in zip(payload['variantes'],attrs):
                     vid=v['id'] or ident();previous=old.get(vid);quantity=v['quantidade'];values={k:v[k] for k in ('sku','codigo_barras','custo_centavos','preco_centavos','estoque_minimo','ativo')};values['ativo']=int(values['ativo']);values['atributos']=a
                     if previous:
-                        if previous['atributos']!=a and db.execute('SELECT id FROM itens_venda WHERE loja_id=? AND variante_id=? LIMIT 1',(u['loja_id'],vid)).fetchone():raise HTTPException(422,'Crie uma nova variante para alterar os atributos de uma variante já vendida.')
+                        if previous['atributos']!=a and db.execute('SELECT id FROM itens_venda WHERE loja_id=? AND variante_id=? LIMIT 1',(u['loja_id'],vid)).fetchone():raise HTTPException(422,'Crie uma nova variante para alterar os atributos de uma variante j� vendida.')
                         db.execute('UPDATE variantes_produto SET '+','.join(k+'=?' for k in values)+' WHERE loja_id=? AND id=?',(*values.values(),u['loja_id'],vid))
                     else:insert(db,'variantes_produto',dict(id=vid,loja_id=u['loja_id'],produto_id=product_id,quantidade=0,**values))
                     before=previous['quantidade'] if previous else 0
                     if quantity!=before:
-                        if previous and len(data.motivo.strip())<2:raise HTTPException(422,'Informe o motivo da alteração de estoque.')
+                        if previous and len(data.motivo.strip())<2:raise HTTPException(422,'Informe o motivo da altera��o de estoque.')
                         movement(db,u,variant(db,u['loja_id'],vid),quantity-before,'ajuste' if previous else 'inicial',data.motivo.strip() or 'Cadastro inicial')
         except HTTPException:raise
         except Exception as exc:
-            if 'unique' in str(exc).lower():raise HTTPException(409,'SKU ou combinação de variante já cadastrado nesta barbearia.')
+            if 'unique' in str(exc).lower():raise HTTPException(409,'SKU ou combina��o de variante j� cadastrado nesta barbearia.')
             raise
         return {'id':product_id}
     @app.post('/api/produtos/catalogo',status_code=201)
@@ -234,18 +234,18 @@ def instalar(app,c):
     @app.post('/api/produtos/estoque')
     def estoque(data:Movimento,request:Request):
         if not data.quantidade or len(data.motivo.strip())<2:raise HTTPException(422,'Informe quantidade e motivo.')
-        if data.tipo in ('reposicao','devolucao') and data.quantidade<0 or data.tipo=='perda' and data.quantidade>0:raise HTTPException(422,'Confira o sinal da quantidade: perdas retiram e reposições acrescentam estoque.')
-        if data.custo_reposicao_centavos is not None and data.tipo!='reposicao':raise HTTPException(422,'Custo da reposição só se aplica a uma entrada.')
+        if data.tipo in ('reposicao','devolucao') and data.quantidade<0 or data.tipo=='perda' and data.quantidade>0:raise HTTPException(422,'Confira o sinal da quantidade: perdas retiram e reposi��es acrescentam estoque.')
+        if data.custo_reposicao_centavos is not None and data.tipo!='reposicao':raise HTTPException(422,'Custo da reposi��o s� se aplica a uma entrada.')
         with banco() as db:
             u,p=auth(db,request,'alterar_estoque',True);lock(db,u['loja_id']);u,p=auth(db,request,'alterar_estoque',True)
-            if data.custo_reposicao_centavos is not None and not p['ver_custo']:raise HTTPException(403,'Você não pode alterar custos.')
+            if data.custo_reposicao_centavos is not None and not p['ver_custo']:raise HTTPException(403,'Voc� n�o pode alterar custos.')
             mid=hashlib.sha256(('estoque:'+u['loja_id']+':'+data.idempotencia).encode()).hexdigest()[:32] if data.idempotencia else None
             if mid:
                 existing=db.execute('SELECT * FROM movimentacoes_estoque WHERE loja_id=? AND id=?',(u['loja_id'],mid)).fetchone()
                 if existing:
                     expected=(data.variante_id,data.tipo,data.quantidade,data.motivo.strip(),u['id'],data.custo_reposicao_centavos)
                     actual=tuple(existing[k] for k in ('variante_id','tipo','quantidade','motivo','usuario_id','custo_reposicao_centavos'))
-                    if actual!=expected:raise HTTPException(409,'Identificador de movimentação já utilizado. Confira o histórico.')
+                    if actual!=expected:raise HTTPException(409,'Identificador de movimenta��o j� utilizado. Confira o hist�rico.')
                     return {'salvo':True}
             v=variant(db,u['loja_id'],data.variante_id);movement(db,u,v,data.quantidade,data.tipo,data.motivo.strip(),cost=data.custo_reposicao_centavos,mid=mid)
             if data.custo_reposicao_centavos is not None:db.execute('UPDATE variantes_produto SET custo_centavos=? WHERE loja_id=? AND id=?',(data.custo_reposicao_centavos,u['loja_id'],v['id']))
@@ -256,22 +256,22 @@ def instalar(app,c):
         fingerprint=hashlib.sha256(data.model_dump_json().encode()).hexdigest()
         with banco() as db:
             u,p=auth(db,request,'registrar_venda',True);lock(db,u['loja_id']);u,p=auth(db,request,'registrar_venda',True)
-            if data.desconto_centavos and not p['aplicar_desconto']:raise HTTPException(403,'Você não pode aplicar desconto.')
+            if data.desconto_centavos and not p['aplicar_desconto']:raise HTTPException(403,'Voc� n�o pode aplicar desconto.')
             existing=db.execute('SELECT * FROM vendas_produtos WHERE loja_id=? AND idempotencia=?',(u['loja_id'],data.idempotencia)).fetchone()
             if existing:
-                if existing['vendedor_id']!=u['id'] or existing['pedido_hash']!=fingerprint:raise HTTPException(409,'Identificador de venda já utilizado. Confira o histórico antes de tentar novamente.')
+                if existing['vendedor_id']!=u['id'] or existing['pedido_hash']!=fingerprint:raise HTTPException(409,'Identificador de venda j� utilizado. Confira o hist�rico antes de tentar novamente.')
                 return sale_view(db,u,p,existing)
             quantities={}
             for item in data.itens:quantities[item.variante_id]=quantities.get(item.variante_id,0)+item.quantidade
             items=[];gross=0;cost=0
             for vid,q in quantities.items():
                 v=variant(db,u['loja_id'],vid)
-                if not v['ativo'] or not v['produto_ativo']:raise HTTPException(422,'Um produto do carrinho está inativo.')
+                if not v['ativo'] or not v['produto_ativo']:raise HTTPException(422,'Um produto do carrinho est� inativo.')
                 if q>v['quantidade']:raise HTTPException(409,'Estoque insuficiente para '+v['nome']+'. Confira o carrinho.')
                 price=v['preco_centavos'] if v['preco_centavos'] is not None else v['preco_padrao'];unit_cost=v['custo_centavos'] if v['custo_centavos'] is not None else v['custo_padrao']
                 items.append((v,q,price,unit_cost));gross+=q*price;cost+=q*unit_cost
-            if data.desconto_centavos>gross:raise HTTPException(422,'O desconto não pode superar o subtotal.')
-            if data.total_esperado_centavos is not None and data.total_esperado_centavos!=gross-data.desconto_centavos:raise HTTPException(409,'Os preços mudaram. Atualize o catálogo e revise a venda.')
+            if data.desconto_centavos>gross:raise HTTPException(422,'O desconto n�o pode superar o subtotal.')
+            if data.total_esperado_centavos is not None and data.total_esperado_centavos!=gross-data.desconto_centavos:raise HTTPException(409,'Os pre�os mudaram. Atualize o cat�logo e revise a venda.')
             sale=dict(id=ident(),loja_id=u['loja_id'],vendedor_id=u['id'],vendedor_nome=seller(db,u),criado_em=now(),pagamento=data.pagamento,bruto_centavos=gross,desconto_centavos=data.desconto_centavos,total_centavos=gross-data.desconto_centavos,custo_centavos=cost,status='confirmada',idempotencia=data.idempotencia,pedido_hash=fingerprint,cancelado_por=None,cancelado_em=None,motivo_cancelamento=None,devolver_estoque=0)
             insert(db,'vendas_produtos',sale);remaining=data.desconto_centavos;remaining_gross=gross
             for i,(v,q,price,unit_cost) in enumerate(items):
@@ -282,12 +282,12 @@ def instalar(app,c):
 
     def period(inicio,fim):
         end=fim or datetime.now(br).date();start=inicio or end
-        if start>end or (end-start).days>366:raise HTTPException(422,'Escolha um período de até 366 dias, com início antes do fim.')
+        if start>end or (end-start).days>366:raise HTTPException(422,'Escolha um per�odo de at� 366 dias, com in�cio antes do fim.')
         return start.isoformat(),(end+timedelta(days=1)).isoformat()
     @app.get('/api/produtos/vendas')
     def vendas(request:Request,inicio:date|None=None,fim:date|None=None,offset:int=0):
         start,end=period(inicio,fim)
-        if not 0<=offset<=1_000_000:raise HTTPException(422,'Página inválida.')
+        if not 0<=offset<=1_000_000:raise HTTPException(422,'P�gina inv�lida.')
         with banco() as db:
             u,p=auth(db,request);where='loja_id=? AND criado_em>=? AND criado_em<?';params=[u['loja_id'],start,end]
             if u['papel']!='dono':where+=' AND vendedor_id=?';params.append(u['id'])
@@ -298,7 +298,7 @@ def instalar(app,c):
         with banco() as db:
             u,p=auth(db,request,'cancelar_venda',True);lock(db,u['loja_id']);u,p=auth(db,request,'cancelar_venda',True)
             row=db.execute('SELECT * FROM vendas_produtos WHERE loja_id=? AND id=?',(u['loja_id'],sid)).fetchone()
-            if not row or u['papel']!='dono' and row['vendedor_id']!=u['id']:raise HTTPException(404,'Venda não encontrada.')
+            if not row or u['papel']!='dono' and row['vendedor_id']!=u['id']:raise HTTPException(404,'Venda n�o encontrada.')
             if row['status']=='cancelada':return sale_view(db,u,p,row)
             if data.devolver_estoque:
                 for item in db.execute('SELECT * FROM itens_venda WHERE loja_id=? AND venda_id=?',(u['loja_id'],sid)).fetchall():movement(db,u,variant(db,u['loja_id'],item['variante_id']),item['quantidade'],'cancelamento',data.motivo.strip(),sid)
@@ -307,7 +307,7 @@ def instalar(app,c):
     @app.get('/api/produtos/movimentacoes')
     def movimentacoes(request:Request,produto_id:str='',inicio:date|None=None,fim:date|None=None,offset:int=0):
         start,end=period(inicio,fim)
-        if not 0<=offset<=1_000_000:raise HTTPException(422,'Página inválida.')
+        if not 0<=offset<=1_000_000:raise HTTPException(422,'P�gina inv�lida.')
         with banco() as db:
             u,p=auth(db,request,'ver_estoque',owner=True);where='m.loja_id=? AND m.criado_em>=? AND m.criado_em<?';params=[u['loja_id'],start,end]
             if produto_id:where+=' AND m.produto_id=?';params.append(produto_id)
@@ -335,3 +335,4 @@ def instalar(app,c):
     def script_produtos():return FileResponse(c['ROOT']/'produtos.js',media_type='application/javascript')
     @app.get('/produtos.css')
     def css_produtos():return FileResponse(c['ROOT']/'produtos.css',media_type='text/css')
+
