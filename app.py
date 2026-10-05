@@ -76,7 +76,9 @@ def iniciar():
         demo = padrao()
         db.execute('INSERT INTO lojas (id,slug,configuracao) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING', ('demo','barbearia',json.dumps(demo)))
         for row in db.execute('SELECT * FROM agendamentos WHERE inicio IS NULL OR barbeiro_id IS NULL').fetchall():
-            inicio = row['inicio'] or datetime.strptime(row['data_hora'],'%Y-%m-%d �s %H:%M').isoformat(timespec='minutes')
+            # Normalize the legacy display separator before parsing so the
+            # database remains independent of source-file encoding.
+            inicio = row['inicio'] or datetime.strptime(row['data_hora'].replace(' �s ', ' a '),'%Y-%m-%d a %H:%M').isoformat(timespec='minutes')
             barber = next((b['id'] for b in demo['barbeiros'] if b['nome']==row['barbeiro_nome']), 'antigo-'+str(row['id']))
             service = next((s for s in demo['servicos'] if s['nome']==row['servico_nome']), None)
             db.execute('UPDATE agendamentos SET inicio=?, barbeiro_id=?, servico_id=? WHERE id=?', (inicio,barber,service['id'] if service else None,row['id']))
