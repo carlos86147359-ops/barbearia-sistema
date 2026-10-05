@@ -76,9 +76,11 @@ def iniciar():
         demo = padrao()
         db.execute('INSERT INTO lojas (id,slug,configuracao) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING', ('demo','barbearia',json.dumps(demo)))
         for row in db.execute('SELECT * FROM agendamentos WHERE inicio IS NULL OR barbeiro_id IS NULL').fetchall():
-            # Normalize the legacy display separator before parsing so the
-            # database remains independent of source-file encoding.
-            inicio = row['inicio'] or datetime.strptime(row['data_hora'].replace(' �s ', ' a '),'%Y-%m-%d a %H:%M').isoformat(timespec='minutes')
+            # Parse the legacy display value by its numeric date/time parts;
+            # this keeps old rows independent of source-file encoding.
+            legacy = row['data_hora']
+            match = re.match(r'^(\d{4}-\d{2}-\d{2}).*?(\d{2}:\d{2})$', legacy or '')
+            inicio = row['inicio'] or datetime.fromisoformat(f'{match.group(1)}T{match.group(2)}').isoformat(timespec='minutes')
             barber = next((b['id'] for b in demo['barbeiros'] if b['nome']==row['barbeiro_nome']), 'antigo-'+str(row['id']))
             service = next((s for s in demo['servicos'] if s['nome']==row['servico_nome']), None)
             db.execute('UPDATE agendamentos SET inicio=?, barbeiro_id=?, servico_id=? WHERE id=?', (inicio,barber,service['id'] if service else None,row['id']))
