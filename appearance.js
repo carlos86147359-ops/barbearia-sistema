@@ -41,6 +41,6 @@ window.Appearance=(()=>{
    catch(e){feedback.textContent=e.message;}finally{buttons.forEach(x=>x.disabled=false);}
   });
  }
- document.addEventListener('DOMContentLoaded',()=>{if(location.pathname==='/entrar'||location.pathname==='/cadastro'){const box=document.createElement('div');box.className='login-appearance';document.querySelector('main')?.append(box);mount(box,{guest:true});}});
+ document.addEventListener('DOMContentLoaded',()=>{apply(choice);if(location.pathname==='/entrar'||location.pathname==='/cadastro'){const box=document.createElement('div');box.className='login-appearance';document.querySelector('main')?.append(box);mount(box,{guest:true});}});
  return {apply,sync,mount,get choice(){return choice;}};
 })();
