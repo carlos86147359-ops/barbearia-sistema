@@ -62,17 +62,21 @@ const fs=require('node:fs/promises');
  assert.equal(await page.locator('.tools').isVisible(),false);
  await page.pdf({path:'test-results/cartaz-a4.pdf',format:'A4',printBackground:true});
  await page.emulateMedia({media:'screen'});
+ for(const mode of ['claro','escuro']){
+ await profile();await theme(mode);
  for(const viewport of [{width:1440,height:960},{width:768,height:1024},{width:390,height:844}]){
   await page.setViewportSize(viewport);
-  for(const path of ['/painel#agenda','/painel#qr','/produtos','/b/teste-qr']){
+  for(const path of ['/painel#inicio','/painel#agenda','/painel#clientes','/painel#financeiro','/painel#config','/painel#qr','/produtos','/b/teste-qr']){
    await page.goto(base+path);
    if(path.startsWith('/painel'))await page.reload();
    await page.waitForFunction(()=>!document.body.textContent.includes('Carregando sua área')&&!document.body.textContent.includes('Gerando seu QR Code'));
    await page.waitForTimeout(500);
+   assert.equal(await page.locator('html').getAttribute('data-theme'),mode);
    const sizes=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
    assert.ok(sizes.scroll<=sizes.width+1,path+': '+JSON.stringify(sizes));
-   await page.screenshot({path:'test-results/'+viewport.width+'-'+path.replace(/[^a-z0-9]/gi,'_')+'.png',fullPage:true});
+   await page.screenshot({path:'test-results/'+mode+'-'+viewport.width+'-'+path.replace(/[^a-z0-9]/gi,'_')+'.png',fullPage:true});
   }
+ }
  }
  // Outro dono, outro contexto e preferência independente.
  const other=await browser.newContext({colorScheme:'dark'});
