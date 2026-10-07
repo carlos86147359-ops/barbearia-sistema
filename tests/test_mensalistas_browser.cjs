@@ -64,7 +64,7 @@ const fs=require('node:fs/promises');
  // The existing product cash view includes the confirmed receipt.
  await page.goto(base+'/produtos?view=overview');await page.getByRole('heading',{name:'Faturamento por origem',exact:true}).waitFor();
  await page.getByText('Mensalidades recebidas:',{exact:false}).waitFor();
- assert.match(await page.locator('#content').innerText(),/Plano Premium/);
+ assert.match(await page.locator('main').innerText(),/Plano Premium/);
  // Actual public customer flow remains available.
  await page.goto(base+'/b/monthly-browser');await page.locator('#start-booking').click();
  await page.locator('#service-choices [data-choice=corte]').click();await page.locator('#continuar-servico').click();
