@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 VERSAO_TERMOS='2026-10-02'
 TABLES={
+    'preferencias':['id','tema'],
     'lojas':['id','slug','configuracao'],
     'usuarios':['id','loja_id','email','senha'],
     'funcionarios':['id','loja_id','barbeiro_id','email','senha','ativo'],

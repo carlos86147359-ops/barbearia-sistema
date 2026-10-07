@@ -1,0 +1,94 @@
+name: Validar QR e aparencia
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: ['*.py', '*.html', '*.css', '*.js', 'requirements*.txt', 'tests/**', '.github/workflows/qr-aparencia.yml']
+permissions:
+  contents: read
+jobs:
+  interface:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-backup.txt httpx opencv-python-headless
+      - name: Validar QR com decodificador independente
+        env:
+          QR_DECODE_TEST: '1'
+        run: PYTHONPATH=. python tests/test_aparencia_qr.py
+      - name: Instalar navegador de teste
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Abrir servidor com banco temporario
+        run: |
+          BARBER_DB_PATH="$(mktemp -u /tmp/barber-qr-XXXXXX.db)" PUBLIC_BASE_URL=http://127.0.0.1:8788 BILLING_ENABLED=false uvicorn app:app --host 127.0.0.1 --port 8788 > /tmp/barber-qr-server.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8788/health; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/barber-qr-server.log
+          exit 1
+      - name: Testar temas e QR no navegador
+        run: node tests/test_aparencia_qr_browser.cjs
+      - name: Guardar capturas, PNG e cartaz PDF de teste
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: qr-aparencia-evidencias
+          path: test-results/
+          retention-days: 7
+  publicacao:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Conferir atualizacao publicada no Render sem alterar dados
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import time
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+          base = 'https://barbearia-sistema-rj6p.onrender.com'
+          def read(path):
+              req = Request(base + path, headers={'Cache-Control': 'no-cache', 'User-Agent': 'BarberSaaS-Deploy-Check'})
+              try:
+                  with urlopen(req, timeout=20) as response:
+                      return response.status, response.read()
+              except HTTPError as e:
+                  return e.code, b''
+          def check():
+              status, body = read('/health')
+              assert status == 200, 'health: ' + str(status)
+              for asset in ['appearance.js', 'appearance.css']:
+                  status, body = read('/' + asset)
+                  assert status == 200, asset + ': ' + str(status)
+                  assert hashlib.sha256(body).digest() == hashlib.sha256(Path(asset).read_bytes()).digest(), asset + ': versao anterior'
+              status, body = read('/entrar')
+              assert status == 200 and b'/appearance.js' in body and b'/appearance.css' in body, 'tela de login desatualizada'
+              for path in ['/api/aparencia', '/api/qr-agendamento', '/api/qr-agendamento.png', '/qr-agendamento/imprimir']:
+                  status, _ = read(path)
+                  assert status == 401, path + ': ' + str(status)
+          for attempt in range(1, 31):
+              try:
+                  check()
+                  print('OK: versao publicada, health, login, temas e rotas administrativas protegidas.', flush=True)
+                  break
+              except Exception as e:
+                  print('Aguardando publicacao (' + str(attempt) + '/30): ' + str(e), flush=True)
+                  if attempt == 30:
+                      raise
+                  time.sleep(20)
+          PY

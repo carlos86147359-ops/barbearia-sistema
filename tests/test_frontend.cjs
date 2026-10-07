@@ -35,7 +35,7 @@ const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.i
   slotsCtx.api=async()=>{throw Error('conex�o indispon�vel');};await assert.rejects(slotsCtx.loadBookingAvailability(choice));
   const uiCtx={esc:s=>String(s),document:{body:{style:{setProperty(){}}}}};vm.createContext(uiCtx);vm.runInContext(fs.readFileSync(path.join(root,'design-system.js'),'utf8')+';this.ui=UI;',uiCtx);
   const calendar=uiCtx.ui.calendar({month:'2026-10',selected:'2026-10-05',min:'2026-10-03',max:'2027-04-01',days:[0,1,2,3,4]});
-  assert.match(calendar,/data-date="2026-10-03"[^>]*disabled/);assert.match(calendar,/data-date="2026-10-05"[^>]*aria-pressed="true"/);assert.match(calendar,/aria-label="M�s anterior" disabled/);
+  assert.match(calendar,/data-date="2026-10-03"[^>]*disabled/);assert.match(calendar,/data-date="2026-10-05"[^>]*aria-pressed="true"/);assert.match(calendar,/aria-label="Mês anterior" disabled/);
   for(const status of [200,401,500]){
     let panel=false,form=false;
     const ctx={api:async()=>{if(status!==200)throw {status};},location:{replace:p=>{panel=p==='/painel';}},acesso:()=>{form=true;}};
