@@ -146,6 +146,11 @@ with tempfile.TemporaryDirectory() as tmp:
     summary=a.get(path+'/dashboard?inicio='+today+'&fim='+today).json()
     assert summary['pagas']==2 and summary['receita_centavos']==20990 and summary['cancelamentos']==1 and summary['ativos']==1
     assert b.get(path+'/dashboard').json()['receita_centavos']==0
+    # A paid cycle starting in the future must not be mislabeled expired.
+    original=new['ciclo']
+    with mod.banco() as db:db.execute('UPDATE mensal_ciclos SET inicio=?,fim=? WHERE loja_id=? AND id=?',(day,(date.fromisoformat(day)+timedelta(days=30)).isoformat(),owner['loja_id'],original['id']))
+    future=a.get(path+'/assinantes/'+newid).json()['assinante'];assert not future['ativo'] and future['status_visual']=='aguardando_inicio'
+    with mod.banco() as db:db.execute('UPDATE mensal_ciclos SET inicio=?,fim=? WHERE loja_id=? AND id=?',(original['inicio'],original['fim'],owner['loja_id'],original['id']))
     # Due renewal creates a pending invoice once; old credits/history remain.
     with mod.banco() as db:
         past=(date.fromisoformat(today)-timedelta(days=31)).isoformat()
