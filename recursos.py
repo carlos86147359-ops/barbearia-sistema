@@ -29,6 +29,8 @@ TABLES={
 
 from produtos import TABLES as PRODUCT_TABLES
 TABLES.update(PRODUCT_TABLES)
+from mensalistas import TABLES as MONTHLY_TABLES
+TABLES.update(MONTHLY_TABLES)
 
 class EmailPedido(BaseModel):
     email: str = Field(min_length=3,max_length=150)
