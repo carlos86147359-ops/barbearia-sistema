@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 MAX_UPLOAD=600_000
-LIMITS={'logo':(512,120_000),'capa':(1200,250_000)}
+LIMITS={'logo':(512,120_000),'capa':(1200,250_000),'foto':(512,120_000)}
 
 def pronto():
     return bool(re.fullmatch(r'[a-zA-Z0-9_-]{1,100}',os.environ.get('CLOUDINARY_CLOUD_NAME','')) and os.environ.get('CLOUDINARY_API_KEY') and os.environ.get('CLOUDINARY_API_SECRET'))
@@ -63,10 +63,11 @@ def instalar(app,core):
         with core['banco']() as db:core['dono'](request,db)
         return {'disponivel':pronto()}
 
-    @app.post('/api/imagens/{kind}')
-    async def upload(kind:str,request:Request):
-        if kind not in LIMITS:raise HTTPException(404,'Imagem não encontrada.')
-        with core['banco']() as db:user=core['dono'](request,db,True)
+    async def receber(kind,request,barber_id=None):
+        with core['banco']() as db:
+            user=core['dono'](request,db,True)
+            if barber_id is not None and not any(b['id']==barber_id for b in core['config_da_loja'](db,user['loja_id'])['barbeiros']):
+                raise HTTPException(404,'Salve o profissional nas configurações antes de enviar a foto.')
         if not pronto():raise HTTPException(503,'O envio de imagens aguarda a configuração do armazenamento.')
         core['limitar'](request,'imagens-'+user['loja_id'],12,3600)
         chunks=[];total=0
@@ -75,14 +76,41 @@ def instalar(app,core):
             if total>MAX_UPLOAD:raise HTTPException(413,'A imagem é grande demais. Escolha uma imagem menor.')
             chunks.append(chunk)
         processed=await run_in_threadpool(preparar,b''.join(chunks),kind)
-        url=await run_in_threadpool(enviar,processed,user['loja_id'],kind)
+        url=await run_in_threadpool(enviar,processed,user['loja_id'],'profissional-'+barber_id if barber_id is not None else kind)
         def persistir():
             with core['banco']() as db:
                 if core['DATABASE_URL']:db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
                 else:db.execute('BEGIN IMMEDIATE')
                 # Revalidar a sessão caso tenha sido revogada durante o envio.
                 current=core['dono'](request,db,True)
-                cfg=core['config_da_loja'](db,current['loja_id']);cfg[kind+'_url']=url
+                cfg=core['config_da_loja'](db,current['loja_id'])
+                if barber_id is None: cfg[kind+'_url']=url
+                else:
+                    barber=next((b for b in cfg['barbeiros'] if b['id']==barber_id),None)
+                    if barber is None: raise HTTPException(404,'Profissional removido durante o envio.')
+                    barber['foto_url']=url
                 db.execute('UPDATE lojas SET configuracao=? WHERE id=?',(json.dumps(cfg),current['loja_id']))
         await run_in_threadpool(persistir)
         return {'url':url,'bytes':len(processed)}
+
+    @app.post('/api/imagens/{kind}')
+    async def upload(kind:str,request:Request):
+        if kind not in ('logo','capa'):raise HTTPException(404,'Imagem não encontrada.')
+        return await receber(kind,request)
+
+    @app.post('/api/equipe/{barber_id}/foto')
+    async def foto(barber_id:str,request:Request):
+        return await receber('foto',request,barber_id)
+
+    @app.delete('/api/equipe/{barber_id}/foto')
+    def remover_foto(barber_id:str,request:Request):
+        with core['banco']() as db:
+            if core['DATABASE_URL']:db.execute('SELECT pg_advisory_xact_lock(?)',(7821601,))
+            else:db.execute('BEGIN IMMEDIATE')
+            user=core['dono'](request,db,True)
+            cfg=core['config_da_loja'](db,user['loja_id'])
+            barber=next((b for b in cfg['barbeiros'] if b['id']==barber_id),None)
+            if barber is None:raise HTTPException(404,'Profissional não encontrado.')
+            barber['foto_url']=''
+            db.execute('UPDATE lojas SET configuracao=? WHERE id=?',(json.dumps(cfg),user['loja_id']))
+        return {'url':''}

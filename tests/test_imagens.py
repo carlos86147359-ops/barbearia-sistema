@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.get('/api/imagens/status').json()=={'disponivel':True}
     seen=[]
     def fake_send(data,shop,kind):
-        image=Image.open(io.BytesIO(data));assert image.format=='WEBP';assert max(image.size)<=imagens.LIMITS[kind][0];assert len(data)<=imagens.LIMITS[kind][1]
+        image=Image.open(io.BytesIO(data));assert image.format=='WEBP';assert max(image.size)<=imagens.LIMITS['foto' if kind.startswith('profissional-') else kind][0];assert len(data)<=imagens.LIMITS['foto' if kind.startswith('profissional-') else kind][1]
         seen.append((shop,kind));return 'https://res.cloudinary.com/teste-cloud/image/upload/v1/barbersaas/'+shop+'/'+kind+'.webp'
     with patch.object(imagens,'enviar',side_effect=fake_send):
         assert public.post('/api/imagens/logo',content=raw).status_code==401
@@ -58,10 +58,40 @@ with tempfile.TemporaryDirectory() as tmp:
         assert a.get('/api/configuracao').json()['logo_url']==before
     cfg=a.get('/api/configuracao').json();cfg['barbeiros']=[{'id':'prof','nome':'Profissional'}]
     assert a.put('/api/configuracao',json=cfg,headers=headers[0]).status_code==200
+    cfgb=b.get('/api/configuracao').json();cfgb['barbeiros']=[{'id':'prof','nome':'Outra equipe'}]
+    assert b.put('/api/configuracao',json=cfgb,headers=headers[1]).status_code==200
+    with patch.object(imagens,'enviar',side_effect=fake_send):
+        assert public.post('/api/equipe/prof/foto',content=raw).status_code==401
+        assert a.post('/api/equipe/prof/foto',content=raw).status_code==403
+        assert a.post('/api/equipe/inexistente/foto',content=raw,headers=headers[0]).status_code==404
+        assert a.post('/api/imagens/foto',content=raw,headers=headers[0]).status_code==404
+        r=a.post('/api/equipe/prof/foto',content=raw,headers=headers[0]);assert r.status_code==200,r.text
+        photo=r.json()['url'];assert '/profissional-prof.webp' in photo
+        assert public.get('/api/publico/loja-0/configuracao').json()['barbeiros'][0]['foto_url']==photo
+        assert not b.get('/api/configuracao').json()['barbeiros'][0].get('foto_url')
+        r=b.post('/api/equipe/prof/foto',content=raw,headers=headers[1]);assert r.status_code==200
+        assert r.json()['url']!=photo
+        # Clientes antigos que não conhecem o campo preservam a foto.
+        cfg=a.get('/api/configuracao').json();del cfg['barbeiros'][0]['foto_url']
+        assert a.put('/api/configuracao',json=cfg,headers=headers[0]).status_code==200
+        assert a.get('/api/configuracao').json()['barbeiros'][0]['foto_url']==photo
+        invalid=a.get('/api/configuracao').json();invalid['barbeiros'][0]['foto_url']='javascript:alert(1)'
+        assert a.put('/api/configuracao',json=invalid,headers=headers[0]).status_code==422
+        assert a.delete('/api/equipe/prof/foto').status_code==403
+        assert public.delete('/api/equipe/prof/foto').status_code==401
+        assert a.delete('/api/equipe/prof/foto',headers=headers[0]).status_code==200
+        assert a.get('/api/configuracao').json()['barbeiros'][0]['foto_url']==''
+        assert b.get('/api/configuracao').json()['barbeiros'][0]['foto_url']==r.json()['url']
+        assert a.post('/api/equipe/prof/foto',content=raw,headers=headers[0]).status_code==200
+    with patch.object(imagens,'enviar',side_effect=mod.HTTPException(502,'Falha de teste')):
+        assert a.post('/api/equipe/prof/foto',content=raw,headers=headers[0]).status_code==502
+        assert a.get('/api/configuracao').json()['barbeiros'][0]['foto_url']==photo
     invite=a.post('/api/equipe/prof/convite',json={'email':'prof@example.com'},headers=headers[0]).json()
     staff=TestClient(mod.app);r=staff.post('/api/convite/aceitar',json={'token':invite['link'].split('#')[1],'senha':'SenhaTeste!12345'});assert r.status_code==201
     sh={'X-CSRF-Token':r.json()['csrf']}
     assert staff.get('/api/imagens/status').status_code==403
     assert staff.post('/api/imagens/logo',content=raw,headers=sh).status_code==403
+    assert staff.post('/api/equipe/prof/foto',content=raw,headers=sh).status_code==403
+    assert staff.delete('/api/equipe/prof/foto',headers=sh).status_code==403
     assert 'segredo-teste' not in public.get('/image-upload.js').text
     print('OK: imagem real recomprimida, limites, CSRF, papéis, isolamento, persistência, erro preservando URL e segredo somente no servidor.')

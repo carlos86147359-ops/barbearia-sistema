@@ -21,6 +21,55 @@ const fs=require('node:fs/promises');
  assert.equal(r.status(),200,await r.text());
  async function profile(){await page.goto(base+'/painel#perfil');await page.reload();await page.getByRole('heading',{name:'Aparência',exact:true}).waitFor();}
  async function theme(value){await page.locator('[data-appearance-choice="'+value+'"]').click();await page.getByText('Preferência salva na sua conta.',{exact:true}).waitFor();}
+
+ // Cloudinary simulado somente neste teste: valida o arquivo enviado e persiste via API existente.
+ await page.route('**/api/imagens/status',route=>route.fulfill({json:{disponivel:true}}));
+ let failPhoto=true,uploads=0;
+ const photoUrl='https://res.cloudinary.com/teste-cloud/image/upload/v1/foto.webp';
+ await page.route('https://res.cloudinary.com/teste-cloud/**',async route=>{
+  await route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jh1sAAAAASUVORK5CYII=','base64')});
+ });
+ await page.route('**/api/equipe/prof/foto',async route=>{
+  if(route.request().method()!=='POST')return route.continue();
+  const bytes=route.request().postDataBuffer();assert.ok(bytes.length<=120000);
+  assert.equal(bytes.toString('ascii',0,4),'RIFF');assert.equal(bytes.toString('ascii',8,12),'WEBP');
+  uploads++;
+  if(failPhoto){failPhoto=false;return route.fulfill({status:502,json:{detail:'Falha de teste. Tente novamente.'}});}
+  const fresh=await (await context.request.get(base+'/api/configuracao')).json();
+  fresh.barbeiros[0].foto_url=photoUrl;
+  const response=await context.request.put(base+'/api/configuracao',{headers:{'X-CSRF-Token':session.csrf},data:fresh});
+  assert.equal(response.status(),200,await response.text());
+  await route.fulfill({json:{url:photoUrl,bytes:bytes.length}});
+ });
+ await profile();
+ await page.locator('#app-shell [data-shell=equipe]').first().click();
+ const editor=page.locator('#equipe-area [data-professional-photo=prof]');
+ await editor.waitFor();
+ await page.waitForFunction(()=>!document.querySelector('#equipe-area [data-photo-pick]')?.disabled);
+ const original=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1600;c.height=1000;c.getContext('2d').fillRect(0,0,c.width,c.height);return c.toDataURL('image/png').split(',')[1];});
+ await editor.locator('[type=file]').setInputFiles({name:'barbeiro.png',mimeType:'image/png',buffer:Buffer.from(original,'base64')});
+ await editor.getByText(/Prévia pronta/).waitFor();
+ await editor.locator('[data-photo-save]').click();await editor.getByText('Falha de teste. Tente novamente.').waitFor();
+ await editor.locator('[data-photo-save]').click();await editor.getByText('Foto salva! Já aparece na escolha do profissional.').waitFor();
+ assert.equal(uploads,2);
+ assert.equal(await page.locator('#profissionais [data-campo=foto_url]').inputValue(),photoUrl);
+ await page.screenshot({path:'test-results/equipe-foto.png',fullPage:true});
+ await page.locator('#app-shell [data-shell=config]').first().click();
+ await page.locator('[data-config-section=config-profissionais]').click();
+ assert.equal(await page.locator('#profissionais [data-campo=foto_url]').inputValue(),photoUrl);
+ await page.locator('#salvar-config').click();
+ await page.getByText(/Configurações salvas/).first().waitFor();
+ assert.equal((await (await context.request.get(base+'/api/configuracao')).json()).barbeiros[0].foto_url,photoUrl);
+ await page.goto(base+'/b/teste-qr');
+ await page.locator('#start-booking').click();
+ await page.locator('#service-choices [data-choice=corte]').click();
+ await page.locator('#continuar-servico').click();
+ assert.equal(await page.locator('#professional-choices [data-choice=prof] img').getAttribute('src'),photoUrl);
+ await profile();
+ await page.locator('#app-shell [data-shell=equipe]').first().click();
+ await page.locator('#equipe-area [data-photo-remove]').click();
+ await page.locator('#equipe-area').getByText('Foto removida.',{exact:true}).waitFor();
+ assert.equal((await (await context.request.get(base+'/api/configuracao')).json()).barbeiros[0].foto_url,'');
  await profile();
  await theme('claro');
  assert.equal(await page.locator('html').getAttribute('data-theme'),'claro');
@@ -66,7 +115,7 @@ const fs=require('node:fs/promises');
  await profile();await theme(mode);
  for(const viewport of [{width:1440,height:960},{width:768,height:1024},{width:390,height:844}]){
   await page.setViewportSize(viewport);
-  for(const path of ['/painel#inicio','/painel#agenda','/painel#clientes','/painel#financeiro','/painel#config','/painel#qr','/produtos','/b/teste-qr']){
+  for(const path of ['/painel#inicio','/painel#agenda','/painel#clientes','/painel#equipe','/painel#financeiro','/painel#config','/painel#qr','/produtos','/b/teste-qr']){
    await page.goto(base+path);
    if(path.startsWith('/painel'))await page.reload();
    await page.waitForFunction(()=>!document.body.textContent.includes('Carregando sua área')&&!document.body.textContent.includes('Gerando seu QR Code'));
