@@ -14,6 +14,7 @@ spec=importlib.util.spec_from_file_location('backup_schema',Path(__file__).with_
 schema=importlib.util.module_from_spec(spec);spec.loader.exec_module(schema)
 TABLES=schema.TABLES
 from produtos import TABLES as PRODUCT_TABLES, DDL as PRODUCT_DDL, INDEXES as PRODUCT_INDEXES
+from mensalistas import TABLES as MONTHLY_TABLES, DDL as MONTHLY_DDL, INDEXES as MONTHLY_INDEXES
 INTEGER={'id':{'agendamentos'},'ativo':{'funcionarios'},'valor_centavos':{'pagamentos'},'reserva_id':{'links_clientes'},'duracao_minutos':{'agendamentos'},'comissao_pct':{'agendamentos'}}
 
 def ler(path,checksum=None):
@@ -23,11 +24,13 @@ def ler(path,checksum=None):
     keys=set(data.get('tabelas',{}))
     allowed=[set(TABLES),set(TABLES)-{'cortesias'},set(TABLES)-set(PRODUCT_TABLES),set(TABLES)-set(PRODUCT_TABLES)-{'cortesias'}]
     allowed += [s-{'preferencias'} for s in allowed]
+    allowed += [s-set(MONTHLY_TABLES) for s in allowed]
     if data.get('formato')!='barbersaas-backup' or data.get('versao')!=1 or keys not in allowed: raise ValueError('Formato de cópia não reconhecido.')
     tables=data['tabelas']
     tables.setdefault('cortesias',[])
     tables.setdefault('preferencias',[])
     for table in PRODUCT_TABLES: tables.setdefault(table,[])
+    for table in MONTHLY_TABLES: tables.setdefault(table,[])
     for table,columns in TABLES.items():
         if not isinstance(tables[table],list): raise ValueError('Tabela inválida: '+table)
         for row in tables[table]:
@@ -53,6 +56,24 @@ def ler(path,checksum=None):
             if table!='variantes_produto' and variants.get((row['loja_id'],row['variante_id']))!=row['produto_id']: raise ValueError('Variante incompatível em '+table)
             if table!='variantes_produto' and row['venda_id'] is not None and (row['loja_id'],row['venda_id']) not in sales: raise ValueError('Venda ausente em '+table)
     if any((r['loja_id'],r['funcionario_id']) not in staff for r in tables['permissoes_caixa']): raise ValueError('Profissional ausente nas permissões.')
+    for table in MONTHLY_TABLES:
+        if any(r['loja_id'] not in shops for r in tables[table]):raise ValueError('Barbearia ausente em '+table)
+    plans={(r['loja_id'],r['id']) for r in tables['mensal_planos']}
+    members={(r['loja_id'],r['id']):r for r in tables['mensal_assinantes']}
+    cycles={(r['loja_id'],r['id']):r for r in tables['mensal_ciclos']}
+    bookings={(r['loja_id'],r['id']):r for r in tables['agendamentos']}
+    for r in tables['mensal_assinantes']:
+        if (r['loja_id'],r['plano_id']) not in plans:raise ValueError('Plano ausente no assinante.')
+    for r in tables['mensal_ciclos']:
+        if (r['loja_id'],r['assinante_id']) not in members or (r['loja_id'],r['plano_id']) not in plans:raise ValueError('Ciclo incompatível.')
+        if r['confirmado_por'] and r['confirmado_por'] not in users:raise ValueError('Responsável pelo pagamento ausente.')
+    for r in tables['mensal_utilizacoes']:
+        cycle=cycles.get((r['loja_id'],r['ciclo_id']))
+        booking=bookings.get((r['loja_id'],r['agendamento_id']))
+        if not cycle or not booking or cycle['assinante_id']!=r['assinante_id'] or booking['servico_id']!=r['servico_id'] or booking['barbeiro_id']!=r['barbeiro_id']:raise ValueError('Utilização incompatível.')
+        if r['registrado_por'] not in users or (r['estornado_por'] and r['estornado_por'] not in users):raise ValueError('Responsável pela utilização ausente.')
+    for r in tables['mensal_eventos']:
+        if r['usuario_id'] not in users or (r['assinante_id'] and (r['loja_id'],r['assinante_id']) not in members):raise ValueError('Evento incompatível.')
     return tables
 
 def restaurar(tables,sqlite_path=None,postgres=False):
@@ -78,10 +99,10 @@ def restaurar(tables,sqlite_path=None,postgres=False):
                 primary=col=='id' or (table in ('assinaturas','cortesias') and col=='loja_id') or (table in ('aceites','emails_confirmados') and col=='usuario_id') or (table=='links_clientes' and col=='reserva_id')
                 definitions.append(col+' '+typ+(' PRIMARY KEY' if primary else '')+(' UNIQUE' if (table,col) in {('lojas','slug'),('usuarios','email'),('usuarios','loja_id'),('funcionarios','email'),('pagamentos','referencia'),('links_clientes','token')} else ''))
             if table=='funcionarios': definitions.append('UNIQUE(loja_id,barbeiro_id)')
-            db.execute('CREATE TABLE '+table+' ('+(PRODUCT_DDL[table] if table in PRODUCT_DDL else ','.join(definitions))+')')
+            db.execute('CREATE TABLE '+table+' ('+(PRODUCT_DDL[table] if table in PRODUCT_DDL else MONTHLY_DDL[table] if table in MONTHLY_DDL else ','.join(definitions))+')')
             sql='INSERT INTO '+table+' ('+','.join(columns)+') VALUES ('+','.join([placeholder]*len(columns))+')'
             for row in tables[table]: db.execute(sql,tuple(row[col] for col in columns))
-        for sql in PRODUCT_INDEXES: db.execute(sql)
+        for sql in PRODUCT_INDEXES+MONTHLY_INDEXES: db.execute(sql)
         if postgres:
             db.execute("SELECT setval(pg_get_serial_sequence('agendamentos','id'),COALESCE((SELECT MAX(id) FROM agendamentos),1),(SELECT COUNT(*)>0 FROM agendamentos))")
         for table in TABLES:

@@ -23,6 +23,8 @@ jobs:
         env:
           QR_DECODE_TEST: '1'
         run: PYTHONPATH=. python tests/test_aparencia_qr.py
+      - name: Validar assinaturas e transacoes SQLite
+        run: PYTHONPATH=. python tests/test_mensalistas.py
       - name: Instalar navegador de teste
         run: |
           npm install --no-save playwright
@@ -38,6 +40,8 @@ jobs:
           exit 1
       - name: Testar temas e QR no navegador
         run: node tests/test_aparencia_qr_browser.cjs
+      - name: Testar assinaturas no navegador e no celular
+        run: node tests/test_mensalistas_browser.cjs
       - name: Guardar capturas, PNG e cartaz PDF de teste
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -72,13 +76,13 @@ jobs:
           def check():
               status, body = read('/health')
               assert status == 200, 'health: ' + str(status)
-              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js']:
+              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js', 'mensalistas.js', 'mensalistas.css', 'produtos.js']:
                   status, body = read('/' + asset)
                   assert status == 200, asset + ': ' + str(status)
                   assert hashlib.sha256(body).digest() == hashlib.sha256(Path(asset).read_bytes()).digest(), asset + ': versao anterior'
               status, body = read('/entrar')
               assert status == 200 and b'/appearance.js' in body and b'/appearance.css' in body, 'tela de login desatualizada'
-              for path in ['/api/aparencia', '/api/qr-agendamento', '/api/qr-agendamento.png', '/qr-agendamento/imprimir']:
+              for path in ['/api/aparencia', '/api/qr-agendamento', '/api/qr-agendamento.png', '/qr-agendamento/imprimir', '/api/mensalistas/planos', '/api/mensalistas/assinantes', '/api/mensalistas/dashboard']:
                   status, _ = read(path)
                   assert status == 401, path + ': ' + str(status)
           for attempt in range(1, 31):
