@@ -25,7 +25,7 @@ const fs=require('node:fs/promises');
  await page.locator('#monthly-plan-form button').click();
  await page.locator('#monthly-body').getByRole('heading',{name:'Plano Premium',exact:true}).waitFor();
  await page.locator('#app-shell [data-shell=clientes]').first().click();
- await page.locator('[data-client=11944444444]').click();
+ await page.locator('[data-client="11944444444"]').click();
  await page.locator('#monthly-enroll').click();
  await page.locator('#monthly-enroll-form button').click();
  await page.locator('#shell-dialog-title').filter({hasText:'Assinatura · João Mensalista'}).waitFor();
