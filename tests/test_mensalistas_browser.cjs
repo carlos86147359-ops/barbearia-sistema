@@ -15,7 +15,7 @@ const fs=require('node:fs/promises');
  const now=new Date(),day=new Date(now.getTime()+2*86400000).toISOString().slice(0,10);
  r=await context.request.post(base+'/api/publico/monthly-browser/agendamentos',{data:{cliente_nome:'João Mensalista',cliente_telefone:'11944444444',barbeiro_id:'prof',servico_id:'corte',data:day,horario:'09:00'}});
  assert.equal(r.status(),201,await r.text());const aid=(await r.json()).agendamento_id;
- await page.goto(base+'/painel#assinaturas');
+ await page.goto(base+'/painel#assinaturas');await page.reload();
  await page.getByRole('heading',{name:'Assinaturas',exact:true}).waitFor();
  await page.locator('[data-month-tab=planos]').click();await page.locator('#monthly-new-plan').click();
  await page.locator('#monthly-plan-form [name=nome]').fill('Plano Premium');
@@ -53,7 +53,7 @@ const fs=require('node:fs/promises');
   // Change persisted theme through real API and sync after reload.
   r=await context.request.put(base+'/api/aparencia',{headers,data:{tema:scheme==='light'?'claro':'escuro'}});assert.equal(r.status(),200,await r.text());
   for(const width of [1440,768,390]){
-   await page.setViewportSize({width,height:960});await page.goto(base+'/painel#assinaturas');
+   await page.setViewportSize({width,height:960});await page.goto(base+'/painel#assinaturas');await page.reload();
    await page.getByRole('heading',{name:'Assinaturas',exact:true}).waitFor();
    await page.getByText('1 / 4 utilizados · 3 restantes',{exact:true}).waitFor();
    const dimensions=await page.evaluate(()=>({viewport:innerWidth,body:document.documentElement.scrollWidth}));
@@ -72,7 +72,7 @@ const fs=require('node:fs/promises');
  // Re-login preserves saved appearance and subscription history.
  await context.request.post(base+'/api/logout',{headers});
  r=await context.request.post(base+'/api/login',{data:{email:'monthly-browser@example.com',senha:password}});assert.equal(r.status(),200,await r.text());
- await page.goto(base+'/painel#assinaturas');await page.getByText('1 / 4 utilizados · 3 restantes',{exact:true}).waitFor();
+ await page.goto(base+'/painel#assinaturas');await page.reload();await page.getByText('1 / 4 utilizados · 3 restantes',{exact:true}).waitFor();
  assert.deepEqual(errors,[]);
  await browser.close();console.log('OK: planos, adesão do cliente existente, pagamento, agenda, conclusão, limite, financeiro, temas e 3 tamanhos.');
 })().catch(e=>{console.error(e);process.exit(1);});
