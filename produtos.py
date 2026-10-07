@@ -152,6 +152,8 @@ def instalar(app,c):
         with banco() as db:
             u=c['dono'](request,db,True);lock(db,u['loja_id']);u=c['dono'](request,db,True)
             if not db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND id=? AND ativo=1',(u['loja_id'],uid)).fetchone():raise HTTPException(404,'Profissional n�o encontrado.')
+            previous=db.execute('SELECT permissoes FROM permissoes_caixa WHERE loja_id=? AND funcionario_id=?',(u['loja_id'],uid)).fetchone()
+            if previous:p.update({k:v for k,v in json.loads(previous['permissoes']).items() if k.startswith('assinaturas_')})
             db.execute('INSERT INTO permissoes_caixa(id,loja_id,funcionario_id,permissoes,atualizado_por,atualizado_em) VALUES(?,?,?,?,?,?) ON CONFLICT(loja_id,funcionario_id) DO UPDATE SET permissoes=excluded.permissoes,atualizado_por=excluded.atualizado_por,atualizado_em=excluded.atualizado_em',(ident(),u['loja_id'],uid,json.dumps(p),u['id'],now()))
         return p
 
@@ -326,8 +328,11 @@ def instalar(app,c):
             if p['ver_estoque']:
                 r['estoque_baixo']=[dict(x) for x in db.execute('SELECT v.id,v.produto_id,p.nome,v.atributos,v.quantidade,v.estoque_minimo FROM variantes_produto v JOIN produtos p ON p.loja_id=v.loja_id AND p.id=v.produto_id WHERE v.loja_id=? AND v.ativo=1 AND p.ativo=1 AND v.quantidade<=v.estoque_minimo ORDER BY v.quantidade,p.nome LIMIT 2000',(u['loja_id'],))]
             if u['papel']=='dono':
-                service=db.execute("SELECT COALESCE(SUM(preco),0) AS total FROM agendamentos WHERE loja_id=? AND status='concluido' AND inicio>=? AND inicio<?",(u['loja_id'],start,end)).fetchone()['total']
-                r['servicos_centavos']=round(service*100);r['faturamento_total_centavos']=r['servicos_centavos']+r['total_centavos']
+                service=db.execute("SELECT COALESCE(SUM(preco),0) AS total FROM agendamentos WHERE loja_id=? AND status='concluido' AND inicio>=? AND inicio<? AND NOT EXISTS(SELECT 1 FROM mensal_utilizacoes mu WHERE mu.loja_id=agendamentos.loja_id AND mu.agendamento_id=agendamentos.id AND mu.estornada_em IS NULL)",(u['loja_id'],start,end)).fetchone()['total']
+                r['servicos_centavos']=round(service*100)
+                monthly=c['mensal_financeiro'](db,u['loja_id'],start,(date.fromisoformat(end[:10])-timedelta(days=1)).isoformat())
+                r['assinaturas_centavos']=monthly['total_centavos'];r['receitas_assinaturas']=monthly['receitas']
+                r['faturamento_total_centavos']=r['servicos_centavos']+r['total_centavos']+r['assinaturas_centavos']
             return r
     @app.get('/produtos',response_class=FileResponse)
     def pagina_produtos():return FileResponse(c['ROOT']/'produtos.html',media_type='text/html')
