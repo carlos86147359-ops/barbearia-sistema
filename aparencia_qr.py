@@ -50,7 +50,7 @@ def instalar(app, c):
         if not base:
             base = 'http://127.0.0.1:8788'
         parsed = urlsplit(base)
-        if parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or (c['CLOUD'] and parsed.scheme != 'https'):
+        if parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.path not in ('', '/') or parsed.query or parsed.fragment or (c['CLOUD'] and parsed.scheme != 'https'):
             raise HTTPException(503, 'O endereço público do sistema precisa ser configurado corretamente.')
         return {'nome': config['nome'], 'logo_url': config.get('logo_url',''), 'url': base + '/b/' + shop['slug']}
 
