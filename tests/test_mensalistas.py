@@ -117,6 +117,11 @@ with tempfile.TemporaryDirectory() as tmp:
     assert hist['assinante']['ciclo']['id']==cid
     assert hist['ciclos'][0]['servicos'][0]['utilizados']==0 and hist['ciclos'][1]['servicos'][0]['utilizados']==1
     assert a.post(path+'/assinantes/'+mid+'/acao',json={'acao':'renovar','data':today},headers=hs[0]).status_code==409
+    # Cancel a concrete future invoice without affecting the current paid cycle.
+    future_id=hist['ciclos'][0]['id']
+    assert b.post(path+'/assinantes/'+mid+'/acao',json={'acao':'cancelar_cobranca','ciclo_id':future_id},headers=hs[1]).status_code==404
+    assert a.post(path+'/assinantes/'+mid+'/acao',json={'acao':'cancelar_cobranca','ciclo_id':future_id},headers=hs[0]).status_code==200
+    hist=a.get(path+'/assinantes/'+mid).json();assert hist['assinante']['ativo'] and hist['ciclos'][0]['status']=='cancelado'
     # Plan changes and archiving preserve all snapshots.
     unlimited={**plan,'nome':'Ilimitado','valor_centavos':12990,'servicos':[{'servico_id':'corte','quantidade':None}]}
     r=a.post(path+'/planos',json=unlimited,headers=hs[0]);assert r.status_code==201,r.text
