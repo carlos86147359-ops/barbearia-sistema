@@ -22,9 +22,11 @@ def ler(path,checksum=None):
     data=json.loads(raw)
     keys=set(data.get('tabelas',{}))
     allowed=[set(TABLES),set(TABLES)-{'cortesias'},set(TABLES)-set(PRODUCT_TABLES),set(TABLES)-set(PRODUCT_TABLES)-{'cortesias'}]
+    allowed += [s-{'preferencias'} for s in allowed]
     if data.get('formato')!='barbersaas-backup' or data.get('versao')!=1 or keys not in allowed: raise ValueError('Formato de cópia não reconhecido.')
     tables=data['tabelas']
     tables.setdefault('cortesias',[])
+    tables.setdefault('preferencias',[])
     for table in PRODUCT_TABLES: tables.setdefault(table,[])
     for table,columns in TABLES.items():
         if not isinstance(tables[table],list): raise ValueError('Tabela inválida: '+table)
@@ -32,6 +34,8 @@ def ler(path,checksum=None):
             if not isinstance(row,dict) or set(row)!=set(columns): raise ValueError('Colunas inválidas: '+table)
             if any(not isinstance(v,(str,int,float,type(None))) for v in row.values()): raise ValueError('Valor inválido: '+table)
     shops={r['id'] for r in tables['lojas']};users={r['id'] for r in tables['usuarios']}|{r['id'] for r in tables['funcionarios']};reservations={r['id'] for r in tables['agendamentos']}
+    accounts={'dono:'+r['id'] for r in tables['usuarios']}|{'barbeiro:'+r['id'] for r in tables['funcionarios']}
+    if any(r['id'] not in accounts or r['tema'] not in ('claro','escuro','sistema') for r in tables['preferencias']): raise ValueError('Preferência inválida ou conta ausente.')
     for table in ('usuarios','funcionarios','assinaturas','pagamentos','agendamentos','bloqueios','cortesias'):
         if any(r['loja_id'] not in shops for r in tables[table]): raise ValueError('Barbearia ausente em '+table)
     for table in ('emails_confirmados','aceites'):
