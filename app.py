@@ -386,6 +386,7 @@ class Identificado(BaseModel):
     nome: str = Field(min_length=2,max_length=100)
 
 class Barbeiro(Identificado):
+    foto_url: str = Field(default='',max_length=1000)
     whatsapp: str = Field(default='',max_length=25)
 
 class Servico(Identificado):
@@ -445,6 +446,14 @@ def salvar_config(data: Configuracao,request: Request):
     config['localizacao_url']=value
     config['endereco']=config['endereco'].strip()
     for barber in config['barbeiros']:
+        value=barber['foto_url'].strip()
+        if value:
+            try:
+                parsed=urlsplit(value)
+                valid=parsed.scheme=='https' and bool(parsed.hostname) and not parsed.username and not parsed.password and not any(c.isspace() for c in value)
+            except ValueError: valid=False
+            if not valid: raise HTTPException(422,'Use um link HTTPS válido para a foto do profissional.')
+        barber['foto_url']=value
         raw=barber['whatsapp'].strip()
         number=re.sub(r'\D','',raw)
         if raw and not (len(number) in (10,11) or (number.startswith('55') and len(number) in (12,13))):
@@ -473,6 +482,9 @@ def salvar_config(data: Configuracao,request: Request):
         # Clientes antigos da API continuam preservando a identidade já configurada.
         for field in ('logo_url','capa_url','cor_principal','endereco','instagram','localizacao_url'):
             if field not in data.model_fields_set and field in old: config[field]=old[field]
+        old_photos={b['id']:b.get('foto_url','') for b in old['barbeiros']}
+        for incoming, barber in zip(data.barbeiros, config['barbeiros']):
+            if 'foto_url' not in incoming.model_fields_set: barber['foto_url']=old_photos.get(barber['id'],'')
         for b in old['barbeiros']:
             if b['id'] not in kept:
                 staff=db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],b['id'])).fetchone()
