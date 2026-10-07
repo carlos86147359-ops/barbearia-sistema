@@ -87,6 +87,7 @@ class Pago(Entrada):
 class Acao(Entrada):
     acao:Literal['pausar','retomar','cancelar','trocar_plano','renovar','cancelar_cobranca']
     plano_id:str|None=Field(default=None,max_length=64)
+    ciclo_id:str|None=Field(default=None,max_length=64)
     data:date|None=None
     fim:date|None=None
     motivo:str=Field(default='',max_length=2000)
@@ -170,8 +171,23 @@ def instalar(app,c):
     def balances(db,user,cycle):
         counts={r['servico_id']:r['total'] for r in db.execute('SELECT servico_id,COUNT(*) AS total FROM mensal_utilizacoes WHERE loja_id=? AND ciclo_id=? AND estornada_em IS NULL GROUP BY servico_id',(user['loja_id'],cycle['id']))}
         return [{**s,'utilizados':counts.get(s['servico_id'],0),'restantes':None if s['quantidade'] is None else max(0,s['quantidade']-counts.get(s['servico_id'],0))} for s in json.loads(cycle['servicos'])]
-    def member_json(db,user,member,p):
-        cycle=current_cycle(db,user,member);r=dict(member);r['ciclo']=None
+    def prepare_members(db,user,members):
+        last={};current={};counts={}
+        day=today().isoformat()
+        for raw in db.execute('SELECT * FROM mensal_ciclos WHERE loja_id=? ORDER BY inicio,id',(user['loja_id'],)):
+            row=dict(raw);last[row['assinante_id']]=row
+            if row['inicio']<=day<row['fim']:current[row['assinante_id']]=row
+        for member in members:
+            old=last.get(member['id'])
+            if old and member['status']=='ativa' and member['renovacao'] and old['status']=='pago' and old['fim']<=day:
+                new=ensure_cycle(db,user,member);last[member['id']]=new
+                if new['inicio']<=day<new['fim']:current[member['id']]=new
+        for row in db.execute('SELECT ciclo_id,servico_id,COUNT(*) AS total FROM mensal_utilizacoes WHERE loja_id=? AND estornada_em IS NULL GROUP BY ciclo_id,servico_id',(user['loja_id'],)):
+            counts[(row['ciclo_id'],row['servico_id'])]=row['total']
+        return {'cycles':{m['id']:current.get(m['id'],last.get(m['id'])) for m in members},'counts':counts}
+    def member_json(db,user,member,p,prepared=None):
+        cycle=prepared['cycles'].get(member['id']) if prepared is not None else current_cycle(db,user,member)
+        r=dict(member);r['ciclo']=None
         r['status_visual']=member['status'];r['ativo']=False
         if cycle:
             paid=cycle['status']=='pago';inside=cycle['inicio']<=today().isoformat()<cycle['fim']
@@ -179,7 +195,12 @@ def instalar(app,c):
                 r['ativo']=paid and inside
                 r['status_visual']='vencimento_proximo' if r['ativo'] and (date.fromisoformat(cycle['fim'])-today()).days<=3 else 'ativa' if r['ativo'] else 'pagamento_atrasado' if cycle['status']=='pendente' and cycle['vencimento']<today().isoformat() else 'pendente' if not paid else 'vencida'
             safe={k:cycle[k] for k in ('id','plano_id','plano_nome','inicio','fim','status')}
-            safe['servicos']=balances(db,user,cycle)
+            if prepared is None:safe['servicos']=balances(db,user,cycle)
+            else:
+                safe['servicos']=[]
+                for item in json.loads(cycle['servicos']):
+                    count=prepared['counts'].get((cycle['id'],item['servico_id']),0)
+                    safe['servicos'].append({**item,'utilizados':count,'restantes':None if item['quantidade'] is None else max(0,item['quantidade']-count)})
             if p['assinaturas_financeiro']:safe.update({k:cycle[k] for k in ('vencimento','valor_centavos','desconto_centavos','acrescimo_centavos','total_centavos','pagamento','pago_em','observacoes')})
             r['ciclo']=safe
         if not p['assinaturas_financeiro']:r.pop('observacoes',None)
@@ -237,14 +258,16 @@ def instalar(app,c):
         with banco() as db:
             user,p=auth(db,request);lock(db,user['loja_id'])
             rows=[dict(r) for r in db.execute('SELECT * FROM mensal_assinantes WHERE loja_id=? ORDER BY criado_em DESC,id DESC',(user['loja_id'],))]
+            prepared=prepare_members(db,user,rows)
+            barber_members={r['assinante_id'] for r in db.execute('SELECT DISTINCT assinante_id FROM mensal_utilizacoes WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],barbeiro_id))} if barbeiro_id else None
             result=[]
             for row in rows:
                 if busca.lower() not in (row['cliente_nome']+' '+row['cliente_telefone']).lower() or (plano_id and row['plano_id']!=plano_id):continue
-                ensure_cycle(db,user,row);item=member_json(db,user,row,p)
+                item=member_json(db,user,row,p,prepared)
                 if status and item['status_visual']!=status:continue
                 if ativo is not None and item['ativo']!=ativo:continue
                 if vencimento and (not item['ciclo'] or item['ciclo']['fim']!=vencimento.isoformat()):continue
-                if barbeiro_id and not db.execute('SELECT id FROM mensal_utilizacoes WHERE loja_id=? AND assinante_id=? AND barbeiro_id=? LIMIT 1',(user['loja_id'],row['id'],barbeiro_id)).fetchone():continue
+                if barber_members is not None and row['id'] not in barber_members:continue
                 result.append(item)
             return {'items':result[offset:offset+100],'total':len(result),'offset':offset}
     @app.get('/api/mensalistas/cliente/{phone}')
@@ -309,7 +332,8 @@ def instalar(app,c):
                 start=data.data or (date.fromisoformat(last['fim']) if last else today())
                 new_cycle(db,user,member,plan,start,data.fim)
             elif data.acao=='cancelar_cobranca':
-                cycle=latest(db,user,member)
+                cycle=get(db,'mensal_ciclos',user,data.ciclo_id) if data.ciclo_id else latest(db,user,member)
+                if cycle and cycle['assinante_id']!=rid:raise HTTPException(404,'Cobrança não pertence a esta assinatura.')
                 if not cycle or cycle['status']!='pendente':raise HTTPException(409,'Somente uma cobrança pendente pode ser cancelada.')
                 db.execute("UPDATE mensal_ciclos SET status='cancelado' WHERE loja_id=? AND id=?",(user['loja_id'],cycle['id']))
                 audit(db,user,'cobranca_cancelada',{'ciclo_id':cycle['id'],'motivo':data.motivo},rid)
@@ -420,8 +444,8 @@ def instalar(app,c):
         with banco() as db:
             user,p=auth(db,request,'assinaturas_financeiro');lock(db,user['loja_id'])
             members=[dict(r) for r in db.execute('SELECT * FROM mensal_assinantes WHERE loja_id=?',(user['loja_id'],))]
-            for member in members:ensure_cycle(db,user,member)
-            current=[member_json(db,user,m,p) for m in members]
+            prepared=prepare_members(db,user,members)
+            current=[member_json(db,user,m,p,prepared) for m in members]
             receipts=financeiro(db,user['loja_id'],start.isoformat(),end.isoformat())
             paid=db.execute("SELECT COUNT(*) AS total FROM mensal_ciclos WHERE loja_id=? AND status='pago' AND pago_em>=? AND pago_em<=?",(user['loja_id'],start.isoformat(),end.isoformat())).fetchone()['total']
             pending=list(db.execute("SELECT vencimento FROM mensal_ciclos WHERE loja_id=? AND status='pendente' AND vencimento>=? AND vencimento<=?",(user['loja_id'],start.isoformat(),end.isoformat())))
