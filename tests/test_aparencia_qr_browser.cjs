@@ -19,7 +19,7 @@ const fs=require('node:fs/promises');
  cfg.cor_principal='#dfa94d';
  r=await context.request.put(base+'/api/configuracao',{headers:{'X-CSRF-Token':session.csrf},data:cfg});
  assert.equal(r.status(),200,await r.text());
- async function profile(){await page.goto(base+'/painel#perfil');await page.getByRole('heading',{name:'Aparência',exact:true}).waitFor();}
+ async function profile(){await page.goto(base+'/painel#perfil');await page.reload();await page.getByRole('heading',{name:'Aparência',exact:true}).waitFor();}
  async function theme(value){await page.locator('[data-appearance-choice="'+value+'"]').click();await page.getByText('Preferência salva na sua conta.',{exact:true}).waitFor();}
  await profile();
  await theme('claro');
@@ -48,7 +48,7 @@ const fs=require('node:fs/promises');
  await page.waitForURL(/\/painel(?:#.*)?$/);
  await profile();
  assert.equal(await page.locator('html').getAttribute('data-theme'),'claro');
- await page.goto(base+'/painel#qr');
+ await page.locator('#app-shell [data-shell=qr]').first().click();
  await page.locator('.qr-preview').waitFor();
  await page.locator('.qr-preview').evaluate(img=>img.decode());
  assert.equal(await page.locator('.qr-link a').getAttribute('href'),base+'/b/teste-qr');
@@ -66,6 +66,7 @@ const fs=require('node:fs/promises');
   await page.setViewportSize(viewport);
   for(const path of ['/painel#agenda','/painel#qr','/produtos','/b/teste-qr']){
    await page.goto(base+path);
+   if(path.startsWith('/painel'))await page.reload();
    await page.waitForFunction(()=>!document.body.textContent.includes('Carregando sua área')&&!document.body.textContent.includes('Gerando seu QR Code'));
    await page.waitForTimeout(500);
    const sizes=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
