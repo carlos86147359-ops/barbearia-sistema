@@ -193,7 +193,7 @@ def instalar(app,c):
             paid=cycle['status']=='pago';inside=cycle['inicio']<=today().isoformat()<cycle['fim']
             if member['status']=='ativa':
                 r['ativo']=paid and inside
-                r['status_visual']='vencimento_proximo' if r['ativo'] and (date.fromisoformat(cycle['fim'])-today()).days<=3 else 'ativa' if r['ativo'] else 'pagamento_atrasado' if cycle['status']=='pendente' and cycle['vencimento']<today().isoformat() else 'pendente' if not paid else 'vencida'
+                r['status_visual']='vencimento_proximo' if r['ativo'] and (date.fromisoformat(cycle['fim'])-today()).days<=3 else 'ativa' if r['ativo'] else 'pagamento_atrasado' if cycle['status']=='pendente' and cycle['vencimento']<today().isoformat() else 'cobranca_cancelada' if cycle['status']=='cancelado' else 'pendente' if not paid else 'vencida'
             safe={k:cycle[k] for k in ('id','plano_id','plano_nome','inicio','fim','status')}
             if prepared is None:safe['servicos']=balances(db,user,cycle)
             else:
@@ -432,7 +432,7 @@ def instalar(app,c):
             available=active and item is not None and (item['quantidade'] is None or count<item['quantidade'])
             row['protecao_assinatura']=available
             if p['assinaturas_ver']:
-                row['assinatura']={'id':member['id'],'plano':cycle['plano_nome'],'status':member['status'] if member['status']!='ativa' else 'ativa' if active else 'pagamento_atrasado' if cycle['status']=='pendente' and cycle['vencimento']<today().isoformat() else 'pendente' if cycle['status']!='pago' else 'vencida','vencimento':cycle['fim'],'ativo':active,'servico_incluido':item is not None,'disponivel':available,'utilizados':count,'quantidade':item['quantidade'] if item else 0,'pode_utilizar':p['assinaturas_utilizar']}
+                row['assinatura']={'id':member['id'],'plano':cycle['plano_nome'],'status':member['status'] if member['status']!='ativa' else 'ativa' if active else 'pagamento_atrasado' if cycle['status']=='pendente' and cycle['vencimento']<today().isoformat() else 'cobranca_cancelada' if cycle['status']=='cancelado' else 'pendente' if cycle['status']!='pago' else 'vencida','vencimento':cycle['fim'],'ativo':active,'servico_incluido':item is not None,'disponivel':available,'utilizados':count,'quantidade':item['quantidade'] if item else 0,'pode_utilizar':p['assinaturas_utilizar']}
         return rows
     def financeiro(db,tenant,start,end):
         receipts=[dict(r) for r in db.execute("SELECT c.id,c.plano_nome,a.cliente_nome,c.total_centavos,c.pagamento,c.pago_em FROM mensal_ciclos c JOIN mensal_assinantes a ON a.loja_id=c.loja_id AND a.id=c.assinante_id WHERE c.loja_id=? AND c.status='pago' AND c.pago_em>=? AND c.pago_em<=? ORDER BY c.pago_em DESC,c.id DESC",(tenant,start[:10],end[:10]))]
