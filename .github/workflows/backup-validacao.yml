@@ -45,3 +45,8 @@ jobs:
         env:
           BACKUP_TEST_DATABASE_URL: postgresql://postgres:ensaio-local-descartavel@localhost:5432/ensaio_backup
         run: PYTHONPATH=. python tests/test_backup_postgres.py
+
+      - name: Testar concorrencia e isolamento das assinaturas no PostgreSQL
+        env:
+          MONTHLY_TEST_DATABASE_URL: postgresql://postgres:ensaio-local-descartavel@localhost:5432/ensaio_backup
+        run: PYTHONPATH=. python tests/test_mensalistas.py
