@@ -607,11 +607,12 @@ def agenda(request: Request):
     with banco() as db:
         user=usuario(request,db)
         if user['papel']=='barbeiro':
-            return [dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? AND barbeiro_id=? ORDER BY inicio,id',(user['loja_id'],user['barbeiro_id']))]
-        return [dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? ORDER BY inicio,id',(user['loja_id'],))]
+            return mensal_enriquecer(db,user,[dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? AND barbeiro_id=? ORDER BY inicio,id',(user['loja_id'],user['barbeiro_id']))])
+        return mensal_enriquecer(db,user,[dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? ORDER BY inicio,id',(user['loja_id'],))])
 
 class Situacao(BaseModel):
     status: str
+    assinatura: bool | None = Field(default=None,strict=True)
 
 @app.patch('/api/agendamentos/{reservation_id}')
 def alterar(reservation_id: int,data: Situacao,request: Request):
@@ -621,12 +622,16 @@ def alterar(reservation_id: int,data: Situacao,request: Request):
         user=usuario(request,db,True)
         row=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(reservation_id,user['loja_id'])).fetchone()
         if not row or (user['papel']=='barbeiro' and row['barbeiro_id']!=user['barbeiro_id']): raise HTTPException(404,'Agendamento não encontrado.')
-        if user['papel']=='barbeiro' and (data.status!='concluido' or row['status']!='agendado'): raise HTTPException(403,'Você pode concluir seus atendimentos agendados. Peça ao dono para cancelar ou reabrir.')
+        repetido=data.status=='concluido' and data.assinatura is True and row['status']=='concluido' and db.execute('SELECT id FROM mensal_utilizacoes WHERE loja_id=? AND agendamento_id=? AND estornada_em IS NULL',(user['loja_id'],row['id'])).fetchone()
+        if user['papel']=='barbeiro' and (data.status!='concluido' or row['status']!='agendado') and not repetido: raise HTTPException(403,'Você pode concluir seus atendimentos agendados. Peça ao dono para cancelar ou reabrir.')
         if DATABASE_URL:
             travar(db,user['loja_id'],row['barbeiro_id'])
             row=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(reservation_id,user['loja_id'])).fetchone()
-            if user['papel']=='barbeiro' and row['status']!='agendado': raise HTTPException(409,'A situação deste atendimento mudou. Atualize sua agenda.')
+            repetido=data.status=='concluido' and data.assinatura is True and row['status']=='concluido' and db.execute('SELECT id FROM mensal_utilizacoes WHERE loja_id=? AND agendamento_id=? AND estornada_em IS NULL',(user['loja_id'],row['id'])).fetchone()
+            if user['papel']=='barbeiro' and row['status']!='agendado' and not repetido: raise HTTPException(409,'A situação deste atendimento mudou. Atualize sua agenda.')
         if row['status']=='cancelado' and data.status!='cancelado' and ocupado(db,user['loja_id'],row['barbeiro_id'],datetime.fromisoformat(row['inicio']),row['duracao_minutos'],reservation_id): raise HTTPException(409,'Esse horário já foi ocupado por outra reserva.')
+        if data.status=='concluido':mensal_concluir(db,user,dict(row),data.assinatura)
+        elif row['status']=='concluido':mensal_estornar(db,user,dict(row))
         db.execute('UPDATE agendamentos SET status=? WHERE id=? AND loja_id=?',(data.status,reservation_id,user['loja_id']))
     return {'status':data.status}
 
@@ -695,3 +700,6 @@ instalar_produtos(app,globals())
 
 from aparencia_qr import instalar as instalar_aparencia_qr
 instalar_aparencia_qr(app, globals())
+
+from mensalistas import instalar as instalar_mensalistas
+instalar_mensalistas(app,globals())
