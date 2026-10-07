@@ -72,7 +72,7 @@ jobs:
           def check():
               status, body = read('/health')
               assert status == 200, 'health: ' + str(status)
-              for asset in ['appearance.js', 'appearance.css']:
+              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js']:
                   status, body = read('/' + asset)
                   assert status == 200, asset + ': ' + str(status)
                   assert hashlib.sha256(body).digest() == hashlib.sha256(Path(asset).read_bytes()).digest(), asset + ': versao anterior'
