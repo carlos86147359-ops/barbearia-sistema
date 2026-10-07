@@ -680,3 +680,6 @@ instalar_imagens(app,globals())
 
 from produtos import instalar as instalar_produtos
 instalar_produtos(app,globals())
+
+from aparencia_qr import instalar as instalar_aparencia_qr
+instalar_aparencia_qr(app, globals())
