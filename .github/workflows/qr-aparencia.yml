@@ -31,6 +31,10 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Abrir servidor com banco temporario
         run: |
+          python gerar_chaves_push.py > /tmp/barber-test-push.env
+          set -a
+          . /tmp/barber-test-push.env
+          set +a
           BARBER_DB_PATH="$(mktemp -u /tmp/barber-qr-XXXXXX.db)" PUBLIC_BASE_URL=http://127.0.0.1:8788 BILLING_ENABLED=false uvicorn app:app --host 127.0.0.1 --port 8788 > /tmp/barber-qr-server.log 2>&1 &
           for i in {1..30}; do
             if curl -fsS http://127.0.0.1:8788/health; then exit 0; fi
