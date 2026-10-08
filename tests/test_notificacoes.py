@@ -66,6 +66,20 @@ with tempfile.TemporaryDirectory() as tmp:
             assert db.execute('SELECT id FROM agendamentos WHERE id=?',(p['agendamento_id'],)).fetchone()
             assert db.execute('SELECT id FROM notificacoes WHERE id=?',(p['id'],)).fetchone()
         sent.append((s['endpoint'],p))
+    # Exercise actual encryption/VAPID and transport without network or live credentials.
+    real_send=m.push_enviar
+    from unittest.mock import patch
+    import requests
+    captured=[]
+    def transport(self,method,url,**kwargs):
+        captured.append((method,url,kwargs))
+        response=requests.Response();response.status_code=201;return response
+    with patch.object(requests.Session,'request',transport):
+        real_send(sub('crypto'),{'id':'a'*64,'mensagem':'Texto privado'})
+    assert captured and captured[0][2]['allow_redirects'] is False
+    assert captured[0][2]['headers']['content-encoding']=='aes128gcm'
+    assert b'Texto privado' not in captured[0][2]['data']
+    assert captured[0][2]['timeout']==8
     m.push_enviar=send
     for c,h,n in ((owner,oh,'owner'),(other,xh,'other'),(staff,sh,'s1'),(staff2,s2h,'s2')):
         assert c.post('/api/notificacoes/dispositivos',headers=h,json=sub(n)).status_code==200
