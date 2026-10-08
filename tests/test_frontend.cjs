@@ -4,7 +4,7 @@ const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const script=html.split('<script>')[1].split('</script>')[0];
 new vm.Script(script);new vm.Script(fs.readFileSync(path.join(root,'pwa.js'),'utf8'));new vm.Script(fs.readFileSync(path.join(root,'design-system.js'),'utf8'));
 new vm.Script(fs.readFileSync(path.join(root,'image-upload.js'),'utf8'));
-const route=script.slice(script.indexOf('async function entrada()'),script.indexOf('async function iniciar()'));
+const route=script.slice(script.indexOf('function bookingDeepLink()'),script.indexOf('async function iniciar()'));
 const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.indexOf('function renderPrimeirosPassos('));
 (async()=>{
   await require('./test_agenda_live.cjs')();
@@ -38,10 +38,12 @@ const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.i
   assert.match(calendar,/data-date="2026-10-03"[^>]*disabled/);assert.match(calendar,/data-date="2026-10-05"[^>]*aria-pressed="true"/);assert.match(calendar,/aria-label="Mês anterior" disabled/);
   for(const status of [200,401,500]){
     let panel=false,form=false;
-    const ctx={api:async()=>{if(status!==200)throw {status};},location:{replace:p=>{panel=p==='/painel';}},acesso:()=>{form=true;}};
+    const ctx={URLSearchParams,api:async()=>{if(status!==200)throw {status};},location:{search:'',replace:p=>{panel=p==='/painel';}},acesso:()=>{form=true;}};
     vm.createContext(ctx);vm.runInContext(route,ctx);
     if(status===500)await assert.rejects(ctx.entrada());else await ctx.entrada();
     assert.equal(panel,status===200);assert.equal(form,status===401);
+    ctx.location.search='?agendamento=42&notificacao='+'a'.repeat(64);assert.equal(ctx.bookingDeepLink(),'?agendamento=42&notificacao='+'a'.repeat(64)+'#agenda');
+    ctx.location.search='?agendamento=https://evil.test';assert.equal(ctx.bookingDeepLink(),'');
   }
   const guideCtx={};vm.createContext(guideCtx);vm.runInContext(guide,guideCtx);
   const config={nome:'Loja',whatsapp:'',barbeiros:[],servicos:[],dias:[],periodos:[]};
