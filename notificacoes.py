@@ -27,7 +27,8 @@ TABLES={name:[part.strip().split()[0] for part in ddl.split(',') if not part.str
 INDEXES=[
  'CREATE INDEX IF NOT EXISTS notificacoes_conta ON notificacoes(loja_id,usuario_id,criado_em)',
  'CREATE INDEX IF NOT EXISTS push_fila ON push_entregas(status,proxima)',
- 'CREATE INDEX IF NOT EXISTS push_conta ON push_dispositivos(loja_id,usuario_id,ativo)'
+ 'CREATE INDEX IF NOT EXISTS push_conta ON push_dispositivos(loja_id,usuario_id,ativo)',
+ 'CREATE INDEX IF NOT EXISTS agenda_lembretes ON agendamentos(status,inicio)'
 ]
 DEVICE_COOKIE='barber_push_device'
 FLAGS={'novo':'novos','cancelado':'cancelamentos','reagendado':'reagendamentos','lembrete':'lembretes'}
@@ -56,6 +57,7 @@ def validar(data):
     trusted=host=='fcm.googleapis.com' or host=='updates.push.services.mozilla.com' or host.endswith('.push.services.mozilla.com') or host=='web.push.apple.com' or host.endswith('.push.apple.com') or host.endswith('.notify.windows.com')
     if u.scheme!='https' or not trusted or u.username or u.password or u.port not in (None,443) or u.fragment: raise ValueError('endpoint')
     if set(data['keys'])!={'p256dh','auth'}: raise ValueError('keys')
+    if any(len(v)>100 for v in data['keys'].values()): raise ValueError('keys')
     point=decode(data['keys']['p256dh'])
     if len(point)!=65 or len(decode(data['keys']['auth']))!=16: raise ValueError('keys')
     ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(),point)
