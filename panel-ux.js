@@ -17,6 +17,7 @@ function panelItems(){
  if(p?.acessar_pdv){items.push({id:'caixa',label:'Caixa e vendas',icon:'wallet',group:'Operação',href:'/produtos?view='+ (p.registrar_venda?'new':'sales')},{id:'produtos',label:'Produtos',icon:'box',group:'Operação',href:'/produtos?view=products'});if(p.ver_estoque||p.alterar_estoque)items.push({id:'estoque',label:'Estoque',icon:'list',group:'Operação',href:'/produtos?view=stock'});}
  items.push({id:'financeiro',label:isOwner()?'Financeiro':'Minha comissão',icon:'chart',group:'Gestão'});
  if(isOwner())items.push({id:'equipe',label:'Equipe',icon:'users',group:'Gestão'},{id:'relatorios',label:'Relatórios',icon:'chart',group:'Gestão'},{id:'bloqueios',label:'Folgas e bloqueios',icon:'lock',group:'Sistema'},{id:'config',label:'Configurações',icon:'settings',group:'Sistema'},{id:'plano',label:'Plano e assinatura',icon:'wallet',group:'Sistema'},{id:'qr',label:'QR Code de Agendamento',icon:'scissors',group:'Sistema'},{id:'publica',label:'Minha página',icon:'scissors',group:'Sistema',href:'/b/'+encodeURIComponent(sessao.slug)});
+ items.push({id:'notificacoes',label:'Notificações',icon:'calendar',group:'Sistema'});
  items.push({id:'perfil',label:'Meu perfil',icon:'user',group:'Sistema'});if(sessao.administrador)items.push({id:'gestao',label:'Gestão do SaaS',icon:'settings',group:'Sistema',href:'/gestao'});return items;
 }
 async function painel(){
@@ -25,26 +26,36 @@ async function painel(){
   await Appearance.sync(sessao).catch(()=>{});
   const results=await Promise.all([api(isOwner()?'/api/configuracao':'/api/publico/'+encodeURIComponent(sessao.slug)+'/configuracao'),api('/api/agendamentos'),api('/api/produtos/acesso').catch(()=>null),isOwner()?api('/api/assinatura'):api('/api/meu-perfil')]);
   [config,reservas,caixaAccess]=results;if(isOwner())assinaturaInfo=results[3];else perfilAtual=results[3];
- }catch(err){if(err.status===401){location.replace('/entrar');return;}throw err;}
+ }catch(err){if(err.status===401){location.replace('/entrar'+bookingDeepLink());return;}throw err;}
  await Monthly.init();
  UI.accent(config.cor_principal);document.title=config.nome+' · Painel';
- el.innerHTML=`${['inicio','agenda','clientes','financeiro','relatorios','equipe','bloqueios','perfil','qr','assinaturas'].map(id=>`<section id="${id}-area" ${id==='inicio'?'':'class="hidden"'}></section>`).join('')}<section id="config-area" class="hidden"><div class="page-heading"><div><span class="eyebrow">SUA BARBEARIA</span><h1 id="nome-loja">${esc(config.nome)}</h1><p class="muted">Identidade, serviços e horários em um só lugar.</p></div></div><div id="primeiros-passos"></div><div class="card" id="public-page-card"><h2>Página de agendamento</h2><p class="muted">Compartilhe este link com seus clientes.</p><p id="link-publico" class="linkbox"></p><div class="row"><a id="abrir-link" class="button secondary" target="_blank" rel="noopener">Ver minha página</a><button id="copiar-link" class="secondary">Copiar link</button></div></div><div id="config-form-area"></div><details id="subscription-section" class="card"><summary>Plano e assinatura</summary><div id="assinatura-area"></div></details></section>`;
+ el.innerHTML=`${['inicio','agenda','clientes','financeiro','relatorios','equipe','bloqueios','perfil','qr','assinaturas','notificacoes'].map(id=>`<section id="${id}-area" ${id==='inicio'?'':'class="hidden"'}></section>`).join('')}<section id="config-area" class="hidden"><div class="page-heading"><div><span class="eyebrow">SUA BARBEARIA</span><h1 id="nome-loja">${esc(config.nome)}</h1><p class="muted">Identidade, serviços e horários em um só lugar.</p></div></div><div id="primeiros-passos"></div><div class="card" id="public-page-card"><h2>Página de agendamento</h2><p class="muted">Compartilhe este link com seus clientes.</p><p id="link-publico" class="linkbox"></p><div class="row"><a id="abrir-link" class="button secondary" target="_blank" rel="noopener">Ver minha página</a><button id="copiar-link" class="secondary">Copiar link</button></div></div><div id="config-form-area"></div><details id="subscription-section" class="card"><summary>Plano e assinatura</summary><div id="assinatura-area"></div></details></section>`;
  AppShell.mount({name:config.nome,logo:config.logo_url,role:isOwner()?'Dono / gestor':perfilAtual.profissional,items:panelItems(),active:'inicio',onSelect:mostrarAba});
  if(isOwner()){
   renderConfig();setupConfigSections();renderPrimeirosPassos();renderAssinatura();const link=location.origin+'/b/'+sessao.slug;byId('link-publico').textContent=link;byId('abrir-link').href=link;byId('copiar-link').onclick=async()=>{try{await navigator.clipboard.writeText(link);mensagem('Link copiado.');}catch{mensagem('Copie o endereço mostrado na tela.',true);}};
  }
+ await BarberNotifications.init().catch(()=>{});
  renderAgenda();iniciarAgendaAutomatica();
  const requested=location.hash.slice(1),allowed=panelItems().filter(x=>!x.href).map(x=>x.id);await mostrarAba(allowed.includes(requested)?requested:'inicio');
+ const bookingId=Number(new URLSearchParams(location.search).get('agendamento'));
+ if(Number.isSafeInteger(bookingId)&&bookingId>0){
+  await mostrarAba('agenda');
+  if(reservas.some(r=>r.id===bookingId))showAppointment(bookingId);else mensagem('Este agendamento não está disponível para sua conta.',true);
+  const nid=new URLSearchParams(location.search).get('notificacao');
+  if(nid&&/^[a-f0-9]{64}$/.test(nid))await api('/api/notificacoes/'+nid+'/lida',{method:'POST'}).catch(()=>{});
+ }
+
 }
 async function painelBarbeiro(){return painel();}
 async function mostrarAba(a){
  const allowed=panelItems().filter(x=>!x.href).map(x=>x.id);if(!allowed.includes(a))a='inicio';abaAtual=a;limparMensagem();
- for(const id of ['inicio','agenda','clientes','financeiro','relatorios','equipe','bloqueios','perfil','qr','assinaturas','config'])byId(id+'-area')?.classList.toggle('hidden',id!==a&&!(id==='config'&&a==='plano'));
+ for(const id of ['inicio','agenda','clientes','financeiro','relatorios','equipe','bloqueios','perfil','qr','assinaturas','notificacoes','config'])byId(id+'-area')?.classList.toggle('hidden',id!==a&&!(id==='config'&&a==='plano'));
  AppShell.active(a);history.replaceState(null,'','#'+a);
  if(a==='inicio')await renderHome();if(a==='agenda'){listaAgenda();agendaAutomatica?.refresh();}if(a==='clientes')renderClientes();
  if(a==='financeiro'||a==='relatorios')await renderFinanceiro(a);if(a==='equipe'){byId('equipe-area').innerHTML=UI.loading('Carregando equipe…');await renderEquipe();enhanceTeam();}
  if(a==='bloqueios'){byId('bloqueios-area').innerHTML=UI.loading('Carregando bloqueios…');await blocksPage();}if(a==='perfil')renderPerfil();if(a==='qr')await renderQr();
  if(a==='assinaturas')await Monthly.render();
+ if(a==='notificacoes')await BarberNotifications.render();
  if(a==='config'||a==='plano'){byId('config-form-area').hidden=a==='plano';byId('primeiros-passos').hidden=a==='plano';byId('public-page-card').hidden=a==='plano';byId('subscription-section').hidden=a!=='plano';if(a==='plano'){byId('subscription-section').open=true;renderAssinatura();}}
  document.querySelector('main')?.focus({preventScroll:true});
 }
