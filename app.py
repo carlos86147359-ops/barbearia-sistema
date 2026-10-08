@@ -680,7 +680,17 @@ def agenda_live_script(): return FileResponse(ROOT/'agenda-live.js',media_type='
 @app.get('/admin',response_class=HTMLResponse)
 @app.get('/barbeiro',response_class=HTMLResponse)
 @app.get('/b/{slug}',response_class=HTMLResponse)
-def pagina(): return (ROOT/'index.html').read_text(encoding='utf-8')
+def pagina(request: Request):
+    html = (ROOT/'index.html').read_text(encoding='utf-8')
+    # O cliente recebe a mesma agenda, sem elementos do ambiente interno,
+    # inclusive antes de qualquer JavaScript ou chamada de configuração.
+    if request.url.path.startswith('/b/') or request.url.path == '/minha-reserva':
+        html = html.replace('<body>', '<body class="customer-view" data-public-booking="true">', 1)
+        html = re.sub(r'<header>.*?</header>', '<header><span class="brand">Agendamento online</span></header>', html, count=1, flags=re.S)
+        html = re.sub(r'<section id="instalacao-app".*?</section>', '', html, count=1, flags=re.S)
+        html = re.sub(r'<link rel="manifest"[^>]*>', '', html, count=1)
+        html = re.sub(r'<meta name="apple-mobile-web-app-(?:capable|title)"[^>]*>', '', html)
+    return html
 
 from pwa import instalar as instalar_pwa
 instalar_pwa(app, ROOT)
