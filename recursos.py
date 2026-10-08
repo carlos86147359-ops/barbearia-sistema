@@ -31,6 +31,8 @@ from produtos import TABLES as PRODUCT_TABLES
 TABLES.update(PRODUCT_TABLES)
 from mensalistas import TABLES as MONTHLY_TABLES
 TABLES.update(MONTHLY_TABLES)
+from notificacoes import TABLES as PUSH_TABLES
+TABLES.update(PUSH_TABLES)
 
 class EmailPedido(BaseModel):
     email: str = Field(min_length=3,max_length=150)
@@ -252,7 +254,7 @@ def instalar(app,c):
         return {'horarios':hours}
 
     @app.post('/api/cliente/alterar')
-    def alterar_cliente(data: AlteracaoCliente,request: Request):
+    def alterar_cliente(data: AlteracaoCliente,request: Request,background: BackgroundTasks):
         c['limitar'](request,'alterar-cliente',30)
         if data.acao not in ('cancelar','reagendar'): raise HTTPException(422,'Ação inválida.')
         with banco() as db:
@@ -271,6 +273,10 @@ def instalar(app,c):
                 start=c['inicio_valido'](config,data.data,data.horario,row['duracao_minutos'])
                 if c['ocupado'](db,row['loja_id'],row['barbeiro_id'],start,row['duracao_minutos'],row['id']): raise HTTPException(409,'Esse horário foi ocupado. Escolha outro.')
                 db.execute('UPDATE agendamentos SET inicio=?,data_hora=? WHERE id=?',(start.isoformat(timespec='minutes'),f'{data.data} às {data.horario}',row['id']))
+            updated=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(row['id'],row['loja_id'])).fetchone()
+            if data.acao=='cancelar' or updated['inicio']!=row['inicio']:
+                c['notificar_evento'](db,updated,'cancelado' if data.acao=='cancelar' else 'reagendado')
+        background.add_task(c['push_dispatch'])
         return {'status':'cancelado' if data.acao=='cancelar' else 'agendado'}
 
     @app.post('/api/agendamentos/{id}/link-cliente')
