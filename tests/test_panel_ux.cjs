@@ -20,7 +20,7 @@ module.exports=async function(){
  const clients=ctx.clientGroups();assert.equal(clients.length,1);assert.equal(clients[0].nome,'Jo�o atualizado');assert.equal(clients[0].completed.length,1);assert.equal(clients[0].total,45);
  assert.equal(run("datePlus('2026-12-29',6)"),'2027-01-04');
  ctx.sessao.papel='barbeiro';run("caixaAccess={permissoes:{acessar_pdv:false}};perfilAtual={profissional:'Carlos'}");
- let ids=ctx.panelItems().map(x=>x.id);assert.deepEqual(Array.from(ids),['inicio','agenda','clientes','financeiro','perfil']);
+ let ids=ctx.panelItems().map(x=>x.id);assert.deepEqual(Array.from(ids),['inicio','agenda','clientes','financeiro','notificacoes','perfil']);
  run('caixaAccess={permissoes:{acessar_pdv:true,ver_estoque:true,registrar_venda:false}}');ids=ctx.panelItems().map(x=>x.id);assert(ids.includes('estoque'));assert(!ids.includes('config'));assert(ctx.panelItems().find(x=>x.id==='caixa').href.endsWith('view=sales'));
  metrics.length=0;await ctx.renderHome(false);assert.equal(metrics.length,2);assert(!metrics.some(x=>x[0].includes('Faturamento')));
  // Every configured accent retains a readable foreground and link color.
