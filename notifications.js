@@ -6,7 +6,7 @@ const BarberNotifications=(()=>{
  const ios=()=>/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
  const permission=()=>('Notification' in window?Notification.permission:'default');
  const target=()=>document.getElementById('notificacoes-area');
- async function worker(){const r=await navigator.serviceWorker.register('/sw.js',{scope:'/'});await r.update();return navigator.serviceWorker.ready;}
+ async function worker(){const r=await navigator.serviceWorker.register('/sw.js',{scope:'/'});await r.update();const next=r.installing||r.waiting;if(next&&next.state!=='activated')await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(Error('Atualização de notificações em andamento. Tente novamente.')),10000);next.addEventListener('statechange',()=>{if(next.state==='activated'){clearTimeout(t);resolve();}else if(next.state==='redundant'){clearTimeout(t);reject(Error('Tente ativar novamente.'));}});});return navigator.serviceWorker.ready;}
  async function bind(account){
   const r=await worker(),active=r.active||navigator.serviceWorker.controller;if(!active)return;
   await new Promise((resolve,reject)=>{const channel=new MessageChannel(),timeout=setTimeout(()=>reject(Error('Não foi possível preparar as notificações. Tente novamente.')),5000);channel.port1.onmessage=()=>{clearTimeout(timeout);channel.port1.close();resolve();};active.postMessage({type:'PUSH_ACCOUNT',account},[channel.port2]);});
@@ -43,6 +43,7 @@ const BarberNotifications=(()=>{
   if(busy||!settings||document.hidden)return;busy=true;
   try{
    const data=await api('/api/notificacoes?offset='+offset);
+   if(data.conta!==settings.conta){await detach();location.replace('/entrar');return;}
    const bell=document.getElementById('notification-bell');if(bell){bell.textContent='🔔'+(data.nao_lidas?' '+data.nao_lidas:'');bell.setAttribute('aria-label','Notificações: '+data.nao_lidas+' não lidas');}
    const list=document.getElementById('notification-list');if(!list)return;
    list.innerHTML=data.itens.length?data.itens.map(n=>`<article class="card"><div class="section-heading"><strong>${esc(n.titulo)}</strong><span class="badge">${n.lida_em?'Lida':'Não lida'}</span></div><p><strong>${esc(n.cliente)}</strong></p><p>${esc(n.servico)} · ${esc(n.profissional)}</p><p>${esc(dateLabel(n.inicio))} · ${esc(n.inicio.slice(11,16))}</p><p class="muted">${esc(new Date(n.criado_em*1000).toLocaleString('pt-BR'))}</p><div class="row"><button data-open-notification="${n.id}" data-appointment="${n.agendamento_id}">Ver agendamento</button>${n.lida_em?'':`<button class="secondary" data-read-notification="${n.id}">Marcar como lida</button>`}</div></article>`).join(''):UI.empty('Nenhuma notificação','Os próximos avisos da sua agenda aparecerão aqui.');
