@@ -44,6 +44,10 @@ jobs:
           PYTHONPATH=. python tests/test_equipe.py
           PYTHONPATH=. python tests/test_pwa.py
           node tests/test_frontend.cjs
+      - name: Testar enquadramento e fotos dos profissionais
+        run: |
+          node tests/test_photo_crop.cjs
+          node tests/test_photo_crop_browser.cjs
       - name: Testar agendamento publico sem instalacao ou acesso administrativo
         run: node tests/test_public_booking_browser.cjs
       - name: Testar temas e QR no navegador
@@ -84,7 +88,7 @@ jobs:
           def check():
               status, body = read('/health')
               assert status == 200, 'health: ' + str(status)
-              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js', 'mensalistas.js', 'mensalistas.css', 'produtos.js', 'pwa.js']:
+              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js', 'mensalistas.js', 'mensalistas.css', 'produtos.js', 'pwa.js', 'workspace.css']:
                   status, body = read('/' + asset)
                   assert status == 200, asset + ': ' + str(status)
                   assert hashlib.sha256(body).digest() == hashlib.sha256(Path(asset).read_bytes()).digest(), asset + ': versao anterior'
