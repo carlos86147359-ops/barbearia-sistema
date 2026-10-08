@@ -1,0 +1,41 @@
+name: Validar notificacoes e isolamento
+on:
+  pull_request:
+    paths: ['*.py', '*.js', '*.html', 'requirements*.txt', 'tests/**', '.github/workflows/notificacoes.yml']
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: teste-descartavel
+          POSTGRES_DB: push
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-backup.txt httpx
+      - name: Testar eventos, autorizacao, falhas e backups em SQLite
+        run: PYTHONPATH=. python tests/test_notificacoes.py
+      - name: Testar transacoes e concorrencia em PostgreSQL
+        env:
+          PUSH_TEST_DATABASE_URL: postgresql://postgres:teste-descartavel@localhost:5432/push
+        run: PYTHONPATH=. python tests/test_notificacoes.py
+      - name: Testar service worker e sintaxe JavaScript
+        run: |
+          npm install --no-save fake-indexeddb
+          node --check notifications.js
+          node --check sw.js
+          node --check panel-ux.js
+          node tests/test_push_worker.cjs
