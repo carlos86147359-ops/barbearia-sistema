@@ -217,7 +217,8 @@ def sessao(request: Request):
 @app.post('/api/logout')
 def logout(request: Request,response: Response):
     with banco() as db:
-        usuario(request,db,True)
+        user=usuario(request,db,True)
+        push_logout(db,request,user)
         db.execute('DELETE FROM sessoes WHERE token=?',(hashlib.sha256(request.cookies.get(COOKIE,'').encode()).hexdigest(),))
     response.delete_cookie(COOKIE,path='/')
     return {'status':'ok'}
@@ -566,7 +567,7 @@ def travar(db,shop_id,barber_id):
     else: db.execute('BEGIN IMMEDIATE')
 
 @app.post('/api/publico/{slug}/agendamentos',status_code=201)
-def criar(slug: str,data: Reserva,request: Request):
+def criar(slug: str,data: Reserva,request: Request,background: BackgroundTasks):
     limitar(request,'agendar',30)
     name=data.cliente_nome.strip()
     phone=re.sub(r'\D','',data.cliente_telefone)
@@ -588,6 +589,8 @@ def criar(slug: str,data: Reserva,request: Request):
         cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} às {data.horario}',float(service['preco']),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
         reservation_id=cur.fetchone()['id'] if DATABASE_URL else cur.lastrowid
         management=criar_link_cliente(db,reservation_id)
+        notificar_evento(db,db.execute("SELECT * FROM agendamentos WHERE id=? AND loja_id=?",(reservation_id,shop["id"])).fetchone(),"novo",revisao=0)
+    background.add_task(push_dispatch)
     message=(f"Olá! Fiz um agendamento pelo aplicativo.\n\n"
              f"*Meu agendamento*\n"
              f"*Cliente:* {name}\n"
@@ -615,7 +618,7 @@ class Situacao(BaseModel):
     assinatura: bool | None = Field(default=None,strict=True)
 
 @app.patch('/api/agendamentos/{reservation_id}')
-def alterar(reservation_id: int,data: Situacao,request: Request):
+def alterar(reservation_id: int,data: Situacao,request: Request,background: BackgroundTasks):
     if data.status not in ('agendado','concluido','cancelado'): raise HTTPException(422,'Situação inválida.')
     with banco() as db:
         if not DATABASE_URL: db.execute('BEGIN IMMEDIATE')
@@ -633,6 +636,8 @@ def alterar(reservation_id: int,data: Situacao,request: Request):
         if data.status=='concluido':mensal_concluir(db,user,dict(row),data.assinatura)
         elif row['status']=='concluido':mensal_estornar(db,user,dict(row))
         db.execute('UPDATE agendamentos SET status=? WHERE id=? AND loja_id=?',(data.status,reservation_id,user['loja_id']))
+        if data.status=='cancelado' and row['status']!='cancelado': notificar_evento(db,dict(row),'cancelado')
+    background.add_task(push_dispatch)
     return {'status':data.status}
 
 @app.get('/health')
@@ -713,3 +718,6 @@ instalar_aparencia_qr(app, globals())
 
 from mensalistas import instalar as instalar_mensalistas
 instalar_mensalistas(app,globals())
+
+from notificacoes import instalar as instalar_notificacoes
+instalar_notificacoes(app,globals())

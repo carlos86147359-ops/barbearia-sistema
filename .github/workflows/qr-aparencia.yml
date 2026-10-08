@@ -31,6 +31,10 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Abrir servidor com banco temporario
         run: |
+          python gerar_chaves_push.py > /tmp/barber-test-push.env
+          set -a
+          . /tmp/barber-test-push.env
+          set +a
           BARBER_DB_PATH="$(mktemp -u /tmp/barber-qr-XXXXXX.db)" PUBLIC_BASE_URL=http://127.0.0.1:8788 BILLING_ENABLED=false uvicorn app:app --host 127.0.0.1 --port 8788 > /tmp/barber-qr-server.log 2>&1 &
           for i in {1..30}; do
             if curl -fsS http://127.0.0.1:8788/health; then exit 0; fi
@@ -44,6 +48,8 @@ jobs:
           PYTHONPATH=. python tests/test_equipe.py
           PYTHONPATH=. python tests/test_pwa.py
           node tests/test_frontend.cjs
+      - name: Testar central de notificacoes e experiencia mobile
+        run: node tests/test_notificacoes_browser.cjs
       - name: Testar enquadramento e fotos dos profissionais
         run: |
           node tests/test_photo_crop.cjs
@@ -88,7 +94,7 @@ jobs:
           def check():
               status, body = read('/health')
               assert status == 200, 'health: ' + str(status)
-              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js', 'mensalistas.js', 'mensalistas.css', 'produtos.js', 'pwa.js', 'workspace.css']:
+              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js', 'mensalistas.js', 'mensalistas.css', 'produtos.js', 'pwa.js', 'workspace.css', 'notifications.js', 'sw.js']:
                   status, body = read('/' + asset)
                   assert status == 200, asset + ': ' + str(status)
                   assert hashlib.sha256(body).digest() == hashlib.sha256(Path(asset).read_bytes()).digest(), asset + ': versao anterior'
@@ -100,7 +106,7 @@ jobs:
               assert '/painel' not in header and 'Área da barbearia' not in header, 'acesso interno no cabecalho publico'
               status, body = read('/entrar')
               assert status == 200 and b'/appearance.js' in body and b'/appearance.css' in body, 'tela de login desatualizada'
-              for path in ['/api/aparencia', '/api/qr-agendamento', '/api/qr-agendamento.png', '/qr-agendamento/imprimir', '/api/mensalistas/planos', '/api/mensalistas/assinantes', '/api/mensalistas/dashboard']:
+              for path in ['/api/aparencia', '/api/qr-agendamento', '/api/qr-agendamento.png', '/qr-agendamento/imprimir', '/api/mensalistas/planos', '/api/mensalistas/assinantes', '/api/mensalistas/dashboard', '/api/notificacoes', '/api/notificacoes/config']:
                   status, _ = read(path)
                   assert status == 401, path + ': ' + str(status)
           for attempt in range(1, 31):
