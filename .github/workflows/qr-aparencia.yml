@@ -97,7 +97,8 @@ jobs:
               for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js', 'mensalistas.js', 'mensalistas.css', 'produtos.js', 'pwa.js', 'workspace.css', 'notifications.js', 'sw.js']:
                   status, body = read('/' + asset)
                   assert status == 200, asset + ': ' + str(status)
-                  assert hashlib.sha256(body).digest() == hashlib.sha256(Path(asset).read_bytes()).digest(), asset + ': versao anterior'
+                  expected = Path(asset).read_text(encoding='utf-8').encode('utf-8') if asset == 'sw.js' else Path(asset).read_bytes()
+                  assert hashlib.sha256(body).digest() == hashlib.sha256(expected).digest(), asset + ': versao anterior'
               status, body = read('/b/barbearia')
               assert status == 200, 'pagina publica: ' + str(status)
               html = body.decode('utf-8')
