@@ -33,6 +33,23 @@ const fs=require('node:fs/promises');
  // Denied permission is shown without repeated prompts. No configuration means no subscription attempt.
  await page.evaluate(()=>{Object.defineProperty(Notification,'permission',{configurable:true,value:'denied'});});
  await page.evaluate(()=>BarberNotifications.render());assert.equal(await page.locator('#push-activate').isDisabled(),true);assert.match(await page.locator('#notificacoes-area').innerText(),/Permissão bloqueada/);
+ 
+ // Activation is explicit; subscribe is mocked, the authenticated storage endpoint is real.
+ await page.evaluate(()=>{
+  let current=null;window.__pushRequests=0;window.__pushSubscriptions=0;
+  Object.defineProperty(Notification,'permission',{configurable:true,value:'default'});
+  Notification.requestPermission=async()=>{window.__pushRequests++;Object.defineProperty(Notification,'permission',{configurable:true,value:'granted'});return 'granted';};
+  PushManager.prototype.getSubscription=async()=>current;
+  PushManager.prototype.subscribe=async()=>{window.__pushSubscriptions++;const raw={endpoint:'https://fcm.googleapis.com/fcm/send/browser-test',keys:{p256dh:'',auth:'YWFhYWFhYWFhYWFhYWFhYQ'},expirationTime:null};raw.keys.p256dh=window.__pushKey;current={toJSON:()=>raw,unsubscribe:async()=>{current=null;return true;}};return current;};
+ });
+ const pushConfig=await(await context.request.get(base+'/api/notificacoes/config')).json();assert.ok(pushConfig.public_key);
+ await page.evaluate(k=>window.__pushKey=k,pushConfig.public_key);
+ await page.evaluate(()=>BarberNotifications.render());assert.equal(await page.evaluate(()=>window.__pushRequests),0);
+ await page.locator('#push-activate').click();await page.getByRole('heading',{name:'Notificações ativadas',exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>window.__pushRequests),1);assert.equal(await page.evaluate(()=>window.__pushSubscriptions),1);
+ assert.equal((await(await context.request.get(base+'/api/notificacoes/config')).json()).dispositivo_ativo,true);
+ await page.locator('#push-disable').click();await page.getByRole('heading',{name:'Notificações desativadas',exact:true}).waitFor();
+ assert.equal((await(await context.request.get(base+'/api/notificacoes/config')).json()).dispositivo_ativo,false);
  assert.equal((await publicContext.request.get(base+'/api/notificacoes')).status(),401);
  assert.deepEqual(errors,[]);await browser.close();console.log('OK: central mobile/tablet/desktop, account preferences, unread count, deep link, denied permission and no public push prompts.');
 })().catch(e=>{console.error(e);process.exit(1);});
