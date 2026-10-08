@@ -67,7 +67,7 @@ const fs = require('node:fs/promises');
   const p = await context.newPage(); watch(p);
   const s = await (await context.request.get(base+'/api/sessao')).json(); await context.request.post(base+'/api/logout',{headers:{'X-CSRF-Token':s.csrf}});
   await p.goto(base+'/entrar'); await p.locator('[name=email]').fill(email); await p.locator('[name=senha]').fill(password); await p.locator('#form-acesso button[type=submit]').click(); await p.waitForURL(/\/painel(?:#.*)?$/);
-  await p.locator('#app-shell').waitFor(); assert.equal(await p.locator('#instalar-app').count(),1); assert.equal(await p.locator('link[rel=manifest]').count(),1);
+  await p.locator('#app-shell [data-shell=agenda]').first().waitFor(); assert.equal(await p.locator('#instalar-app').count(),1); assert.equal(await p.locator('link[rel=manifest]').count(),1);
   assert.ok((await (await context.request.get(base+'/api/agendamentos')).json()).some(a=>a.id===appointment.id));
  }
  assert.deepEqual(errors,[]); await browser.close();
