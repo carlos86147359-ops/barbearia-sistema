@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory() as tmp:
     spec=importlib.util.spec_from_file_location('push_test_app',ROOT/'app.py')
     m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     from notificacoes import validar,DDL,TABLES
-    assert all(TABLES[t] for t in DDL)
+    assert all(TABLES[t] and len(TABLES[t])==len(set(TABLES[t])) for t in DDL)
     owner,other,staff,staff2,guest=[TestClient(m.app) for _ in range(5)]
     password='SenhaTeste!12345'
     def create(c,n):
