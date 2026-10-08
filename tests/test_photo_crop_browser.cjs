@@ -10,7 +10,7 @@ const assert=require('node:assert/strict'),{chromium}=require('playwright'),fs=r
  Object.assign(cfg,{servicos:[{id:'corte',nome:'Corte',preco:35,duracao:30}],barbeiros:[{id:'prof',nome:'Carlos',foto_url:oldUrl},{id:'sem-foto',nome:'Bruno'}],dias:[0,1,2,3,4,5,6],periodos:[{inicio:'08:00',fim:'20:00'}]});
  r=await owner.request.put(base+'/api/configuracao',{headers,data:cfg});assert.equal(r.status(),200,await r.text());
  let sent=null,uploads=0,fail=true;
- const old=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jh1sAAAAASUVORK5CYII=','base64');
+ let old=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jh1sAAAAASUVORK5CYII=','base64');
  async function cloud(route){await route.fulfill({contentType:route.request().url()===oldUrl?'image/png':'image/webp',body:route.request().url()===oldUrl?old:sent});}
  await page.route('https://res.cloudinary.com/teste-cloud/**',cloud);
  await page.route('**/api/imagens/status',route=>route.fulfill({json:{disponivel:true}}));
@@ -22,9 +22,10 @@ const assert=require('node:assert/strict'),{chromium}=require('playwright'),fs=r
   const response=await owner.request.put(base+'/api/configuracao',{headers,data:fresh});assert.equal(response.status(),200,await response.text());
   await route.fulfill({json:{url:photoUrl,bytes:sent.length}});
  });
- async function team(){await page.goto(base+'/painel#equipe');await page.locator('#equipe-area [data-photo-pick]').first().waitFor();await page.waitForFunction(()=>!document.querySelector('#equipe-area [data-photo-pick]').disabled);}
+ async function team(){await page.goto(base+'/painel#equipe');await page.reload();await page.locator('#equipe-area [data-photo-pick]').first().waitFor();await page.waitForFunction(()=>!document.querySelector('#equipe-area [data-photo-pick]').disabled);}
  await team();
  const source=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1200;c.height=800;const x=c.getContext('2d');x.fillStyle='#b32323';x.fillRect(0,0,400,800);x.fillStyle='#237d34';x.fillRect(400,0,400,800);x.fillStyle='#244ed0';x.fillRect(800,0,400,800);x.fillStyle='#eec98f';x.beginPath();x.ellipse(950,380,80,115,0,0,Math.PI*2);x.fill();return c.toDataURL('image/png').split(',')[1];});
+ old=Buffer.from(source,'base64');
  const file={name:'rosto.png',mimeType:'image/png',buffer:Buffer.from(source,'base64')};
  const editor=page.locator('#equipe-area [data-professional-photo=prof]');
  assert.equal(await editor.locator('img').getAttribute('src'),oldUrl);
@@ -62,6 +63,15 @@ const assert=require('node:assert/strict'),{chromium}=require('playwright'),fs=r
  // Cancela no editor de configurações e mantém o arquivo processado.
  await page.waitForFunction(()=>!document.querySelector('#profissionais [data-photo-pick]').disabled);
  await page.locator('#profissionais [data-professional-photo=prof] [type=file]').setInputFiles(file);await page.locator('#photo-crop-dialog').waitFor();await page.keyboard.press('Escape');assert.equal(uploads,2);
+ // Imagem vertical no desktop: mouse e teclado também ajustam a posição.
+ await page.setViewportSize({width:1440,height:960});await team();
+ const portrait=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=800;c.height=1200;const x=c.getContext('2d');['#b32323','#237d34','#244ed0'].forEach((color,i)=>{x.fillStyle=color;x.fillRect(0,i*400,800,400);});return c.toDataURL('image/png').split(',')[1];});
+ await editor.locator('[type=file]').setInputFiles({name:'vertical.png',mimeType:'image/png',buffer:Buffer.from(portrait,'base64')});
+ await page.locator('#photo-crop-dialog').waitFor();await page.locator('#photo-crop-zoom').evaluate(e=>{e.value='2';e.dispatchEvent(new Event('input',{bubbles:true}));});
+ const verticalBefore=await sample(),mouseBox=await preview.boundingBox();
+ await page.mouse.move(mouseBox.x+mouseBox.width/2,mouseBox.y+mouseBox.height*.7);await page.mouse.down();await page.mouse.move(mouseBox.x+mouseBox.width*.3,mouseBox.y+mouseBox.height*.05,{steps:10});await page.mouse.up();
+ assert.notDeepEqual(await sample(),verticalBefore);await preview.focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowLeft');
+ await page.locator('[data-crop-cancel]').click();assert.equal(uploads,2);await avatarCheck(page,'#equipe-area [data-professional-avatar=prof]',photoUrl);
  const staff=await browser.newContext({viewport:{width:390,height:844}}),staffPage=await staff.newPage();staffPage.on('pageerror',e=>errors.push(e.message));await staffPage.route('https://res.cloudinary.com/teste-cloud/**',cloud);
  r=await owner.request.post(base+'/api/equipe/prof/convite',{headers,data:{email:'photo-staff@example.com'}});assert.equal(r.status(),201);
  const token=(await r.json()).link.split('#')[1];r=await staff.request.post(base+'/api/convite/aceitar',{data:{token,senha:password}});assert.equal(r.status(),201);
@@ -80,6 +90,8 @@ const assert=require('node:assert/strict'),{chromium}=require('playwright'),fs=r
  cfg=await (await owner.request.get(base+'/api/configuracao')).json();cfg.barbeiros[0].foto_url=oldUrl;
  r=await owner.request.put(base+'/api/configuracao',{headers,data:cfg});assert.equal(r.status(),200);
  await page.goto(base+'/b/photo-crop');await page.locator('#start-booking').click();await page.locator('#service-choices [data-choice=corte]').click();await page.locator('#continuar-servico').click();await avatarCheck(page,'#professional-choices [data-professional-avatar=prof]',oldUrl);
+ assert.equal(await page.locator('#professional-choices [data-professional-avatar=prof] img').evaluate(i=>i.naturalWidth),1200);
+ assert.equal(await page.locator('#professional-choices [data-professional-avatar=prof] img').evaluate(i=>i.naturalHeight),800);
  assert.deepEqual(errors,[]);await browser.close();
  console.log('OK: cancelamento, toque real, zoom, pixels do recorte, 512px/120KB, falha/reenvio, equipe/config/dashboard/perfil/agenda/página pública, iniciais, fotos antigas e 4 larguras.');
 })().catch(e=>{console.error(e);process.exit(1);});
