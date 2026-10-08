@@ -32,6 +32,7 @@ self.addEventListener('message',event=>{
   const client=await self.clients.get(event.source.id);
   if(!client||new URL(client.url).origin!==self.location.origin||!/^\/(painel|admin|barbeiro)$/.test(new URL(client.url).pathname))return;
   await pushStore((s,done)=>{s.put({id:'account',value:String(event.data.account||'')});done(true);});
+  event.ports?.[0]?.postMessage({ok:true});
  })());
 });
 self.addEventListener('push',event=>{
