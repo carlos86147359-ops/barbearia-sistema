@@ -38,6 +38,14 @@ jobs:
           done
           cat /tmp/barber-qr-server.log
           exit 1
+      - name: Validar agenda existente, acesso da equipe e instalacao interna
+        run: |
+          PYTHONPATH=. python tests/test_fluxo.py
+          PYTHONPATH=. python tests/test_equipe.py
+          PYTHONPATH=. python tests/test_pwa.py
+          node tests/test_frontend.cjs
+      - name: Testar agendamento publico sem instalacao ou acesso administrativo
+        run: node tests/test_public_booking_browser.cjs
       - name: Testar temas e QR no navegador
         run: node tests/test_aparencia_qr_browser.cjs
       - name: Testar assinaturas no navegador e no celular
@@ -76,10 +84,16 @@ jobs:
           def check():
               status, body = read('/health')
               assert status == 200, 'health: ' + str(status)
-              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js', 'mensalistas.js', 'mensalistas.css', 'produtos.js']:
+              for asset in ['appearance.js', 'appearance.css', 'image-upload.js', 'design-system.js', 'panel-ux.js', 'mensalistas.js', 'mensalistas.css', 'produtos.js', 'pwa.js']:
                   status, body = read('/' + asset)
                   assert status == 200, asset + ': ' + str(status)
                   assert hashlib.sha256(body).digest() == hashlib.sha256(Path(asset).read_bytes()).digest(), asset + ': versao anterior'
+              status, body = read('/b/barbearia')
+              assert status == 200, 'pagina publica: ' + str(status)
+              html = body.decode('utf-8')
+              assert 'data-public-booking="true"' in html and '<section id="instalacao-app"' not in html and '<link rel="manifest"' not in html, 'pagina publica desatualizada'
+              header = html.split('<header>', 1)[1].split('</header>', 1)[0]
+              assert '/painel' not in header and 'Área da barbearia' not in header, 'acesso interno no cabecalho publico'
               status, body = read('/entrar')
               assert status == 200 and b'/appearance.js' in body and b'/appearance.css' in body, 'tela de login desatualizada'
               for path in ['/api/aparencia', '/api/qr-agendamento', '/api/qr-agendamento.png', '/qr-agendamento/imprimir', '/api/mensalistas/planos', '/api/mensalistas/assinantes', '/api/mensalistas/dashboard']:
