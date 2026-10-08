@@ -7,7 +7,10 @@ const BarberNotifications=(()=>{
  const permission=()=>('Notification' in window?Notification.permission:'default');
  const target=()=>document.getElementById('notificacoes-area');
  async function worker(){const r=await navigator.serviceWorker.register('/sw.js',{scope:'/'});await r.update();return navigator.serviceWorker.ready;}
- async function bind(account){const r=await worker();(r.active||navigator.serviceWorker.controller)?.postMessage({type:'PUSH_ACCOUNT',account});}
+ async function bind(account){
+  const r=await worker(),active=r.active||navigator.serviceWorker.controller;if(!active)return;
+  await new Promise((resolve,reject)=>{const channel=new MessageChannel(),timeout=setTimeout(()=>reject(Error('Não foi possível preparar as notificações. Tente novamente.')),5000);channel.port1.onmessage=()=>{clearTimeout(timeout);channel.port1.close();resolve();};active.postMessage({type:'PUSH_ACCOUNT',account},[channel.port2]);});
+ }
  function state(){
   if(!compatible()||(ios()&&!standalone()))return 'Dispositivo não compatível';
   if(permission()==='denied')return 'Permissão bloqueada';
@@ -77,5 +80,6 @@ const BarberNotifications=(()=>{
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
   clearInterval(timer);timer=setInterval(refresh,60000);await refresh();
  }
- return{init,render,refresh,disable};
+ async function detach(){clearInterval(timer);if(compatible())await bind('');}
+ return{init,render,refresh,disable,detach};
 })();
