@@ -276,7 +276,7 @@ def instalar(app,c):
             u=c['usuario'](request,db);args=(u['loja_id'],u['id'])
             count=db.execute('SELECT COUNT(*) AS n FROM notificacoes WHERE loja_id=? AND usuario_id=? AND lida_em IS NULL',args).fetchone()['n']
             rows=db.execute('SELECT * FROM notificacoes WHERE loja_id=? AND usuario_id=? ORDER BY criado_em DESC,id DESC LIMIT 50 OFFSET ?',(*args,offset)).fetchall()
-        return {'nao_lidas':count,'itens':[{k:r[k] for k in ('id','tipo','agendamento_id','criado_em','lida_em')}|json.loads(r['dados']) for r in rows]}
+        return {'conta':u['loja_id']+':'+u['id'],'nao_lidas':count,'itens':[{k:r[k] for k in ('id','tipo','agendamento_id','criado_em','lida_em')}|json.loads(r['dados']) for r in rows]}
 
     @app.post('/api/notificacoes/lidas')
     def ler_todas(request:Request):
