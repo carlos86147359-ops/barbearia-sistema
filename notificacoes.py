@@ -23,7 +23,7 @@ DDL = {
  'push_dispositivos': 'id TEXT PRIMARY KEY,loja_id TEXT NOT NULL,usuario_id TEXT NOT NULL,endpoint_hash TEXT UNIQUE NOT NULL,assinatura TEXT NOT NULL,ativo INTEGER NOT NULL,criado_em BIGINT NOT NULL,atualizado_em BIGINT NOT NULL',
  'push_entregas': 'id TEXT PRIMARY KEY,loja_id TEXT NOT NULL,usuario_id TEXT NOT NULL,notificacao_id TEXT NOT NULL,dispositivo_id TEXT NOT NULL,status TEXT NOT NULL,tentativas INTEGER NOT NULL,proxima BIGINT NOT NULL,lease TEXT,UNIQUE(notificacao_id,dispositivo_id)'
 }
-TABLES={name:[part.strip().split()[0] for part in ddl.split(',') if not part.strip().startswith('UNIQUE') and ')' not in part] for name,ddl in DDL.items()}
+TABLES={name:[part.strip().split()[0] for part in ddl.split(',UNIQUE(',1)[0].split(',')] for name,ddl in DDL.items()}
 INDEXES=[
  'CREATE INDEX IF NOT EXISTS notificacoes_conta ON notificacoes(loja_id,usuario_id,criado_em)',
  'CREATE INDEX IF NOT EXISTS push_fila ON push_entregas(status,proxima)',
