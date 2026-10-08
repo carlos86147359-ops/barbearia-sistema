@@ -1,0 +1,28 @@
+name: Diagnosticar publicacao de notificacoes
+on:
+  push:
+    branches: [feat/notificacoes-web-push]
+    paths: [.github/workflows/publicacao-diagnostico.yml]
+permissions:
+  contents: read
+jobs:
+  consulta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ler saude, versao e protecao das novas rotas
+        run: |
+          python3 - <<'PY'
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+          import hashlib
+          base='https://barbearia-sistema-rj6p.onrender.com'
+          for path in ['/health','/notifications.js','/sw.js','/api/notificacoes/config']:
+              try:
+                  with urlopen(Request(base+path,headers={'User-Agent':'Barber-Deployment-Diagnostic','Cache-Control':'no-cache'}),timeout=20) as r:
+                      body=r.read()
+                      print(path,'HTTP',r.status,'bytes',len(body),'sha256',hashlib.sha256(body).hexdigest(),flush=True)
+                      if path=='/health':print(body.decode('utf8')[:200],flush=True)
+              except HTTPError as e:print(path,'HTTP',e.code,flush=True)
+              except Exception as e:print(path,type(e).__name__,flush=True)
+          PY
