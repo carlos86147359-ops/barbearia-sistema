@@ -39,3 +39,7 @@ jobs:
           node --check sw.js
           node --check panel-ux.js
           node tests/test_push_worker.cjs
+      - name: Testar promocoes e ultima vaga concorrente em PostgreSQL
+        env:
+          PROMO_TEST_DATABASE_URL: postgresql://postgres:teste-descartavel@localhost:5432/push
+        run: PYTHONPATH=. python tests/test_promocoes.py

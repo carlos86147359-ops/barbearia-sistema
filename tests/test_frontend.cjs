@@ -27,7 +27,7 @@ const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.i
   const available=script.slice(script.indexOf('async function loadBookingAvailability('),script.indexOf('async function horarios()'));
   let active=0,peak=0;
   const slotsCtx={Map,URLSearchParams,config:{barbeiros:[{id:'a'},{id:'b'},{id:'c'},{id:'d'}]},slug:'loja',api:async url=>{active++;peak=Math.max(active,peak);await Promise.resolve();active--;const id=new URL(url,'https://example.com').searchParams.get('barbeiro_id');return {horarios:id==='a'?['10:00','09:00']:id==='b'?['09:30','09:00']:[]};}};
-  vm.createContext(slotsCtx);vm.runInContext(available,slotsCtx);
+  vm.createContext(slotsCtx);vm.runInContext(fs.readFileSync(path.join(root,'promocoes.js'),'utf8'),slotsCtx);vm.runInContext(available,slotsCtx);
   const choice={preferencia:'*',data:'2026-10-05',servico:{id:'corte'}};
   const slots=await slotsCtx.loadBookingAvailability(choice);
   assert.deepEqual([...slots.keys()],['09:00','09:30','10:00']);assert.deepEqual([...slots.get('09:00')],['a','b']);assert.ok(peak<=3);
@@ -76,4 +76,3 @@ const guide=script.slice(script.indexOf('function etapasConfiguracao('),script.i
 })().catch(err=>{console.error(err);process.exitCode=1;});
 
 require('./test_produtos_frontend.cjs');
-

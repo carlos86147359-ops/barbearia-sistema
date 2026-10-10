@@ -4,7 +4,7 @@ for(const file of ['panel-ux.js','app-shell.js','produtos.js','mensalistas.js'])
 module.exports=async function(){
  const nodes=new Map(),metrics=[];
  const ctx={Intl,Date,Map,Set,URLSearchParams,encodeURIComponent,today:()=> '2026-10-05',money:n=>Number(n).toFixed(2),esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),sessao:{papel:'dono',slug:'teste'},config:{nome:'Loja',barbeiros:[]},reservas:[],assinaturaInfo:{ativa:true},etapasConfiguracao:()=>[{pronto:true}],document:{getElementById:id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',querySelectorAll:()=>[]});return nodes.get(id);}},UI:{icon:()=>'',avatar:()=>'',professional:()=>'',empty:()=>''},AppShell:{heading:()=>'',metric:(...x)=>{metrics.push(x);return '';}},api:async()=>{throw Error('offline');}};
- vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(root,'mensalistas.js'),'utf8')+';this.monthly=Monthly;',ctx);vm.runInContext(fs.readFileSync(path.join(root,'panel-ux.js'),'utf8'),ctx);const run=s=>vm.runInContext(s,ctx);
+ vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(root,'promocoes.js'),'utf8'),ctx);vm.runInContext(fs.readFileSync(path.join(root,'mensalistas.js'),'utf8')+';this.monthly=Monthly;',ctx);vm.runInContext(fs.readFileSync(path.join(root,'panel-ux.js'),'utf8'),ctx);const run=s=>vm.runInContext(s,ctx);
  ctx.reservas=[{id:1,inicio:'2026-10-05T09:00',status:'concluido',preco:45,comissao_pct:40,cliente_nome:'Jo�o',cliente_telefone:'(61) 98888-0000'},{id:2,inicio:'2026-10-05T10:00',status:'cancelado',preco:99,cliente_nome:'Jo�o',cliente_telefone:'5561988880000'},{id:3,inicio:'2026-10-06T11:00',status:'agendado',preco:70,cliente_nome:'Jo�o atualizado',cliente_telefone:'61988880000'}];
  run('homeProducts={total_centavos:3050,vendas:1,estoque_baixo:[]}');await ctx.renderHome(false);
  assert.equal(metrics.find(x=>x[0]==='Faturamento hoje')[1],'75.50');assert.equal(metrics.find(x=>x[0]==='Vendas de produtos')[1],'30.50');
@@ -30,4 +30,3 @@ module.exports=async function(){
  console.log('OK: painel por papel, centavos/reais, clientes normalizados, per�odo semanal e contraste.');
 };
 if(require.main===module)module.exports().catch(e=>{console.error(e);process.exitCode=1;});
-
