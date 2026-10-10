@@ -31,6 +31,7 @@ const assert=require('node:assert/strict'),{chromium}=require('playwright'),fs=r
  assert.equal(await editor.locator('img').getAttribute('src'),oldUrl);
  await editor.locator('[type=file]').setInputFiles(file);await page.locator('#photo-crop-dialog').waitFor();assert.equal(uploads,0);
  await page.locator('[data-crop-cancel]').click();assert.equal(uploads,0);assert.equal(await editor.locator('img').getAttribute('src'),oldUrl);
+ await page.waitForFunction(()=>!document.querySelector('#equipe-area [data-professional-photo=prof] [data-photo-pick]').disabled);
  await editor.locator('[type=file]').setInputFiles(file);await page.locator('#photo-crop-dialog').waitFor();
  const preview=page.locator('#photo-crop-dialog canvas');
  const sample=()=>preview.evaluate(c=>{const x=c.getContext('2d');return [...x.getImageData(256,256,1,1).data];});
