@@ -33,6 +33,8 @@ from mensalistas import TABLES as MONTHLY_TABLES
 TABLES.update(MONTHLY_TABLES)
 from notificacoes import TABLES as PUSH_TABLES
 TABLES.update(PUSH_TABLES)
+from promocoes import TABLES as PROMO_TABLES
+TABLES.update(PROMO_TABLES)
 
 class EmailPedido(BaseModel):
     email: str = Field(min_length=3,max_length=150)
@@ -249,6 +251,8 @@ def instalar(app,c):
                     hour=cur.strftime('%H:%M')
                     try: start=c['inicio_valido'](config,data.data,hour,row['duracao_minutos'])
                     except HTTPException: cur+=timedelta(minutes=config['intervalo']);continue
+                    try:c['promo_mover'](db,dict(row),start)
+                    except HTTPException:cur+=timedelta(minutes=config['intervalo']);continue
                     if not c['ocupado'](db,row['loja_id'],row['barbeiro_id'],start,row['duracao_minutos'],row['id']): hours.append(hour)
                     cur+=timedelta(minutes=config['intervalo'])
         return {'horarios':hours}
@@ -272,6 +276,7 @@ def instalar(app,c):
                 if not any(b['id']==row['barbeiro_id'] for b in config['barbeiros']): raise HTTPException(409,'Fale com a barbearia para escolher outro profissional.')
                 start=c['inicio_valido'](config,data.data,data.horario,row['duracao_minutos'])
                 if c['ocupado'](db,row['loja_id'],row['barbeiro_id'],start,row['duracao_minutos'],row['id']): raise HTTPException(409,'Esse horário foi ocupado. Escolha outro.')
+                c['promo_mover'](db,dict(row),start)
                 db.execute('UPDATE agendamentos SET inicio=?,data_hora=? WHERE id=?',(start.isoformat(timespec='minutes'),f'{data.data} às {data.horario}',row['id']))
             updated=db.execute('SELECT * FROM agendamentos WHERE id=? AND loja_id=?',(row['id'],row['loja_id'])).fetchone()
             if data.acao=='cancelar' or updated['inicio']!=row['inicio']:

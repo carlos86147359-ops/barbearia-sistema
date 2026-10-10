@@ -537,7 +537,7 @@ def ocupado(db,shop_id,barber_id,start,duration,ignore=0):
     return bloqueado(db,shop_id,barber_id,start,end) or any(start<datetime.fromisoformat(r['inicio'])+timedelta(minutes=r['duracao_minutos']) and datetime.fromisoformat(r['inicio'])<end for r in rows)
 
 @app.get('/api/publico/{slug}/disponibilidade')
-def disponibilidade(slug: str,data: date,barbeiro_id: str,servico_id: str):
+def disponibilidade(slug: str,data: date,barbeiro_id: str,servico_id: str,promocao_id: str | None = None):
     with banco() as db:
         shop,config=loja_publica(db,slug)
         exigir_assinatura(db,shop['id'])
@@ -550,11 +550,15 @@ def disponibilidade(slug: str,data: date,barbeiro_id: str,servico_id: str):
                 hour=cur.strftime('%H:%M')
                 try: start=inicio_valido(config,data,hour,service['duracao'])
                 except HTTPException: cur+=timedelta(minutes=config['intervalo']); continue
+                if promocao_id:
+                    try: promo_cotar(db,shop['id'],promocao_id,service,barber,start)
+                    except HTTPException: cur+=timedelta(minutes=config['intervalo']); continue
                 if not ocupado(db,shop['id'],barber['id'],start,service['duracao']): hours.append(hour)
                 cur+=timedelta(minutes=config['intervalo'])
     return {'horarios':hours}
 
 class Reserva(BaseModel):
+    promocao_id: str | None = Field(default=None,max_length=64)
     cliente_nome: str = Field(min_length=2,max_length=100)
     cliente_telefone: str = Field(min_length=10,max_length=25)
     barbeiro_id: str
@@ -583,11 +587,14 @@ def criar(slug: str,data: Reserva,request: Request,background: BackgroundTasks):
         if DATABASE_URL: travar(db,shop['id'],barber['id'])
         start=inicio_valido(config,data.data,data.horario,service['duracao'])
         if ocupado(db,shop['id'],barber['id'],start,service['duracao']): raise HTTPException(409,'Esse horário acabou de ser reservado. Escolha outro.')
+        promocao=promo_cotar(db,shop['id'],data.promocao_id,service,barber,start) if data.promocao_id else None
+        valor=promocao['total_centavos']/100 if promocao else service['preco']
         sql='''INSERT INTO agendamentos(cliente_nome,cliente_telefone,barbeiro_nome,servico_nome,data_hora,preco,criado_em,status,inicio,duracao_minutos,loja_id,barbeiro_id,servico_id,comissao_pct)
             VALUES(?,?,?,?,?,?,?,'agendado',?,?,?,?,?,?)'''
         if DATABASE_URL: sql+=' RETURNING id'
-        cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} às {data.horario}',float(service['preco']),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
+        cur=db.execute(sql,(name,phone,barber['nome'],service['nome'],f'{data.data} às {data.horario}',float(valor),datetime.now(BRASIL).isoformat(),start.isoformat(timespec='minutes'),service['duracao'],shop['id'],barber['id'],service['id'],config['comissao']))
         reservation_id=cur.fetchone()['id'] if DATABASE_URL else cur.lastrowid
+        promo_salvar(db,promocao,reservation_id)
         management=criar_link_cliente(db,reservation_id)
         notificar_evento(db,db.execute("SELECT * FROM agendamentos WHERE id=? AND loja_id=?",(reservation_id,shop["id"])).fetchone(),"novo",revisao=0)
     background.add_task(push_dispatch)
@@ -603,15 +610,15 @@ def criar(slug: str,data: Reserva,request: Request,background: BackgroundTasks):
     professional_phone=barber.get('whatsapp','')
     store_phone=professional_phone or config['whatsapp']
     if len(store_phone) in (10,11): store_phone='55'+store_phone
-    return {'agendamento_id':reservation_id,'preco':service['preco'],'link_gerenciar':management,'whatsapp_destinatario':'barbeiro' if professional_phone else 'loja' if store_phone else None,'link_whatsapp':f'https://wa.me/{store_phone}?text={quote(message)}' if store_phone else None}
+    return {'agendamento_id':reservation_id,'preco':valor,'promocao':{k:promocao[k] for k in ('nome','original_centavos','desconto_centavos','total_centavos')} if promocao else None,'link_gerenciar':management,'whatsapp_destinatario':'barbeiro' if professional_phone else 'loja' if store_phone else None,'link_whatsapp':f'https://wa.me/{store_phone}?text={quote(message)}' if store_phone else None}
 
 @app.get('/api/agendamentos')
 def agenda(request: Request):
     with banco() as db:
         user=usuario(request,db)
         if user['papel']=='barbeiro':
-            return mensal_enriquecer(db,user,[dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? AND barbeiro_id=? ORDER BY inicio,id',(user['loja_id'],user['barbeiro_id']))])
-        return mensal_enriquecer(db,user,[dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? ORDER BY inicio,id',(user['loja_id'],))])
+            return promo_enriquecer(db,user,mensal_enriquecer(db,user,[dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? AND barbeiro_id=? ORDER BY inicio,id',(user['loja_id'],user['barbeiro_id']))]))
+        return promo_enriquecer(db,user,mensal_enriquecer(db,user,[dict(r) for r in db.execute('SELECT * FROM agendamentos WHERE loja_id=? ORDER BY inicio,id',(user['loja_id'],))]))
 
 class Situacao(BaseModel):
     status: str
@@ -633,6 +640,7 @@ def alterar(reservation_id: int,data: Situacao,request: Request,background: Back
             repetido=data.status=='concluido' and data.assinatura is True and row['status']=='concluido' and db.execute('SELECT id FROM mensal_utilizacoes WHERE loja_id=? AND agendamento_id=? AND estornada_em IS NULL',(user['loja_id'],row['id'])).fetchone()
             if user['papel']=='barbeiro' and row['status']!='agendado' and not repetido: raise HTTPException(409,'A situação deste atendimento mudou. Atualize sua agenda.')
         if row['status']=='cancelado' and data.status!='cancelado' and ocupado(db,user['loja_id'],row['barbeiro_id'],datetime.fromisoformat(row['inicio']),row['duracao_minutos'],reservation_id): raise HTTPException(409,'Esse horário já foi ocupado por outra reserva.')
+        promo_transicao(db,dict(row),data.status)
         if data.status=='concluido':mensal_concluir(db,user,dict(row),data.assinatura)
         elif row['status']=='concluido':mensal_estornar(db,user,dict(row))
         db.execute('UPDATE agendamentos SET status=? WHERE id=? AND loja_id=?',(data.status,reservation_id,user['loja_id']))
@@ -721,3 +729,6 @@ instalar_mensalistas(app,globals())
 
 from notificacoes import instalar as instalar_notificacoes
 instalar_notificacoes(app,globals())
+
+from promocoes import instalar as instalar_promocoes
+instalar_promocoes(app,globals())
