@@ -87,6 +87,11 @@ with tempfile.TemporaryDirectory() as tmp:
     for _ in range(2):assert public.post('/api/saas/webhook',json=payload,headers=wh).status_code==200
     result=a.get('/api/saas/assinatura').json();paid_until=result['contratos'][0]['pago_ate']
     assert paid_until and len(result['pagamentos'])==1 and result['contratos'][0]['status']=='ativa'
+    # Recuperar vínculo antigo mesmo com listagem vazia: caminho real do PostgreSQL.
+    with appmod.banco() as db:
+        db.execute("UPDATE saas_contratos SET assinatura_id=NULL,cliente_id=NULL,status='checkout' WHERE id=?",(cid,))
+    assert a.post('/api/saas/sincronizar',headers=headers[0]).status_code==200
+    assert a.get('/api/saas/assinatura').json()['contratos'][0]['status']=='ativa'
     assert a.get('/api/assinatura').json()==before,'Sandbox alterou o acesso real!'
     with appmod.banco() as db:
         assert db.execute('SELECT COUNT(*) AS n FROM saas_webhooks').fetchone()['n']==3
