@@ -17,6 +17,7 @@ from produtos import TABLES as PRODUCT_TABLES, DDL as PRODUCT_DDL, INDEXES as PR
 from mensalistas import TABLES as MONTHLY_TABLES, DDL as MONTHLY_DDL, INDEXES as MONTHLY_INDEXES
 from notificacoes import TABLES as PUSH_TABLES, DDL as PUSH_DDL, INDEXES as PUSH_INDEXES
 from promocoes import TABLES as PROMO_TABLES, DDL as PROMO_DDL, INDEXES as PROMO_INDEXES
+from cobranca_saas import TABLES as SAAS_TABLES, DDL as SAAS_DDL, INDEXES as SAAS_INDEXES
 INTEGER={'id':{'agendamentos'},'ativo':{'funcionarios'},'valor_centavos':{'pagamentos'},'reserva_id':{'links_clientes'},'duracao_minutos':{'agendamentos'},'comissao_pct':{'agendamentos'}}
 
 def ler(path,checksum=None):
@@ -29,6 +30,7 @@ def ler(path,checksum=None):
     allowed += [s-set(MONTHLY_TABLES) for s in allowed]
     allowed += [s-set(PUSH_TABLES) for s in allowed]
     allowed += [s-set(PROMO_TABLES) for s in allowed]
+    allowed += [s-set(SAAS_TABLES) for s in allowed]
     if data.get('formato')!='barbersaas-backup' or data.get('versao')!=1 or keys not in allowed: raise ValueError('Formato de cópia não reconhecido.')
     tables=data['tabelas']
     tables.setdefault('cortesias',[])
@@ -37,6 +39,7 @@ def ler(path,checksum=None):
     for table in MONTHLY_TABLES: tables.setdefault(table,[])
     for table in PUSH_TABLES: tables.setdefault(table,[])
     for table in PROMO_TABLES: tables.setdefault(table,[])
+    for table in SAAS_TABLES: tables.setdefault(table,[])
     for table,columns in TABLES.items():
         if not isinstance(tables[table],list): raise ValueError('Tabela inválida: '+table)
         for row in tables[table]:
@@ -103,6 +106,13 @@ def ler(path,checksum=None):
         if (r['loja_id'],r['criado_por']) not in actors:raise ValueError('Autor da promoção incompatível.')
     for r in tables['promocao_eventos']:
         if (r['loja_id'],r['usuario_id']) not in actors or (r['promocao_id'] and (r['loja_id'],r['promocao_id']) not in promos):raise ValueError('Evento promocional incompatível.')
+    contracts={r['id']:r for r in tables['saas_contratos']}
+    for row in contracts.values():
+        if row['loja_id'] not in shops or (row['loja_id'],row['usuario_id']) not in actors or row['ambiente']!='sandbox':raise ValueError('Contrato SaaS incompatível.')
+    for table in ('saas_cobrancas','saas_auditoria'):
+        for row in tables[table]:
+            contract=contracts.get(row['contrato_id'])
+            if not contract or contract['loja_id']!=row['loja_id']:raise ValueError('Vínculo SaaS incompatível.')
     return tables
 
 def restaurar(tables,sqlite_path=None,postgres=False):
@@ -128,10 +138,10 @@ def restaurar(tables,sqlite_path=None,postgres=False):
                 primary=col=='id' or (table in ('assinaturas','cortesias') and col=='loja_id') or (table in ('aceites','emails_confirmados') and col=='usuario_id') or (table=='links_clientes' and col=='reserva_id')
                 definitions.append(col+' '+typ+(' PRIMARY KEY' if primary else '')+(' UNIQUE' if (table,col) in {('lojas','slug'),('usuarios','email'),('usuarios','loja_id'),('funcionarios','email'),('pagamentos','referencia'),('links_clientes','token')} else ''))
             if table=='funcionarios': definitions.append('UNIQUE(loja_id,barbeiro_id)')
-            db.execute('CREATE TABLE '+table+' ('+(PRODUCT_DDL[table] if table in PRODUCT_DDL else MONTHLY_DDL[table] if table in MONTHLY_DDL else PUSH_DDL[table] if table in PUSH_DDL else PROMO_DDL[table] if table in PROMO_DDL else ','.join(definitions))+')')
+            db.execute('CREATE TABLE '+table+' ('+(PRODUCT_DDL[table] if table in PRODUCT_DDL else MONTHLY_DDL[table] if table in MONTHLY_DDL else PUSH_DDL[table] if table in PUSH_DDL else PROMO_DDL[table] if table in PROMO_DDL else SAAS_DDL[table] if table in SAAS_DDL else ','.join(definitions))+')')
             sql='INSERT INTO '+table+' ('+','.join(columns)+') VALUES ('+','.join([placeholder]*len(columns))+')'
             for row in tables[table]: db.execute(sql,tuple(row[col] for col in columns))
-        for sql in PRODUCT_INDEXES+MONTHLY_INDEXES+PUSH_INDEXES+PROMO_INDEXES: db.execute(sql)
+        for sql in PRODUCT_INDEXES+MONTHLY_INDEXES+PUSH_INDEXES+PROMO_INDEXES+SAAS_INDEXES: db.execute(sql)
         if postgres:
             db.execute("SELECT setval(pg_get_serial_sequence('agendamentos','id'),COALESCE((SELECT MAX(id) FROM agendamentos),1),(SELECT COUNT(*)>0 FROM agendamentos))")
         for table in TABLES:

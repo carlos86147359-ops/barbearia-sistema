@@ -732,3 +732,6 @@ instalar_notificacoes(app,globals())
 
 from promocoes import instalar as instalar_promocoes
 instalar_promocoes(app,globals())
+
+from cobranca_saas import instalar as instalar_cobranca_saas
+instalar_cobranca_saas(app,globals())
