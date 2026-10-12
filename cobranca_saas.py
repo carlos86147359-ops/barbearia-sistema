@@ -228,7 +228,7 @@ def instalar(app,c):
                 payments.append(payment_hint)
             if not any(p.get('subscription') for p in payments):
                 with banco() as db:
-                    candidates = db.execute("SELECT DISTINCT recurso_id FROM saas_webhooks WHERE ambiente='sandbox' AND tipo LIKE 'PAYMENT_%' AND criado_em>=? ORDER BY recurso_id LIMIT 10",(row['criado_em'],)).fetchall()
+                    candidates = db.execute("SELECT DISTINCT recurso_id FROM saas_webhooks WHERE ambiente='sandbox' AND tipo LIKE ? AND criado_em>=? ORDER BY recurso_id LIMIT 10",('PAYMENT_%',row['criado_em'])).fetchall()
                 for candidate in candidates:
                     canonical = api('GET','/payments/'+ident(candidate['recurso_id']))
                     if canonical.get('checkoutSession') == row['checkout_id'] and canonical.get('subscription'):
