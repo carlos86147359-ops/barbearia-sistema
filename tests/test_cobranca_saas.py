@@ -112,6 +112,21 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.post('/api/saas/checkout',headers=headers[0]).status_code==409
     assert len(calls)==count
     assert any(r['status']=='incerta' for r in a.get('/api/saas/assinatura').json()['contratos'])
+    uncertain=next(r['id'] for r in a.get('/api/saas/assinatura').json()['contratos'] if r['status']=='incerta')
+    recovery='/api/gestao/asaas/'+uncertain+'/encerrar-rejeitada'
+    assert b.post(recovery,headers=headers[1]).status_code==403
+    assert a.post(recovery).status_code==403
+    assert a.post('/api/gestao/asaas/'+cid+'/encerrar-rejeitada',headers=headers[0]).status_code==409
+    assert a.post(recovery,headers=headers[0]).status_code==200
+    assert a.post(recovery,headers=headers[0]).status_code==200
+    previous_fake=billing.api
+    def rejected(method,path,body=None):
+        if method=='POST' and path=='/checkouts': raise billing.CheckoutRejected()
+        return previous_fake(method,path,body)
+    billing.api=rejected
+    assert a.post('/api/saas/checkout',headers=headers[0]).status_code==422
+    assert not any(r['status']=='incerta' for r in a.get('/api/saas/assinatura').json()['contratos'])
+    billing.api=previous_fake
     os.environ['ASAAS_ENV']='production'
     assert a.get('/api/saas/assinatura').json()=={'disponivel':False}
     assert a.post('/api/saas/checkout',headers=headers[0]).status_code==503
@@ -124,7 +139,7 @@ with tempfile.TemporaryDirectory() as tmp:
     backup=Path(tmp)/'backup.json';backup.write_text(json.dumps(document),encoding='utf-8')
     restored=restaurar_backup.ler(backup,None)
     counts=restaurar_backup.restaurar(restored,Path(tmp)/'restore.db')
-    assert counts['saas_contratos']==2 and counts['saas_cobrancas']==1
+    assert counts['saas_contratos']==3 and counts['saas_cobrancas']==1
     document['tabelas']={t:rows for t,rows in tables.items() if t not in billing.TABLES}
     backup.write_text(json.dumps(document),encoding='utf-8')
     assert restaurar_backup.ler(backup,None)['saas_contratos']==[]
