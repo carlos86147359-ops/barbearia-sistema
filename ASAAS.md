@@ -66,3 +66,5 @@ https://docs.asaas.com/docs/faq-assinaturas
 ASAAS_SANDBOX_TEST_EMAILS aceita uma lista de e-mails de proprietários de teste, separados por vírgula. Por padrão a lista é vazia. Ela libera somente operações Sandbox, nunca o painel administrativo Grupo Havo ou acesso real à agenda. Cadastre uma conta separada e autorize apenas o e-mail dessa conta no Render. Não use e-mails de clientes reais.
 
 Rejeições HTTP 400 da criação de checkout encerram a tentativa sem repetir automaticamente. Timeouts continuam incertos. Para tentativas antigas incertas, o administrador pode encerrar no painel de homologação SOMENTE após conferir HTTP 400 nos logs privados do Asaas. Essa exceção é auditada, bloqueada fora do Sandbox e indisponível para donos de barbearias.
+
+A vinculação inicial recupera a cobrança pelo ID de evento e confirma checkoutSession, assinatura, cliente, valor e ciclo pela API. Para conciliação manual de eventos antigos, busca até 10 IDs de cobrança recebidos após a criação do contrato; esse limite de homologação precisa de índices de correlação antes de produção em escala.

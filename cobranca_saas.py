@@ -215,7 +215,7 @@ def instalar(app,c):
         db.execute('INSERT INTO saas_cobrancas(id,loja_id,contrato_id,ambiente,provedor_id,valor_centavos,status,vencimento,pago_em,periodo_fim,fatura_url,atualizado_em) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ambiente,provedor_id) DO UPDATE SET status=excluded.status,pago_em=excluded.pago_em,periodo_fim=excluded.periodo_fim,fatura_url=excluded.fatura_url,atualizado_em=excluded.atualizado_em',
                    ('sandbox:'+pid,row['loja_id'],row['id'],'sandbox',pid,value,status,due,paid,end,safe_invoice(payment.get('invoiceUrl')),int(time.time())))
 
-    def sync_contract(cid):
+    def sync_contract(cid,payment_hint=None):
         with banco() as db: found = db.execute('SELECT * FROM saas_contratos WHERE id=? AND ambiente=?',(cid,'sandbox')).fetchone()
         if not found or not found['checkout_id']: return
         row = dict(found)
@@ -223,6 +223,17 @@ def instalar(app,c):
         if not sid:
             data = api('GET','/payments?'+urllib.parse.urlencode({'checkoutSession':row['checkout_id'],'limit':100}))
             payments = data.get('data',[])
+            # Vincular apenas cobranças recuperadas da API, nunca o corpo do webhook.
+            if payment_hint and payment_hint.get('checkoutSession') == row['checkout_id']:
+                payments.append(payment_hint)
+            if not any(p.get('subscription') for p in payments):
+                with banco() as db:
+                    candidates = db.execute("SELECT DISTINCT recurso_id FROM saas_webhooks WHERE ambiente='sandbox' AND tipo LIKE 'PAYMENT_%' AND criado_em>=? ORDER BY recurso_id LIMIT 10",(row['criado_em'],)).fetchall()
+                for candidate in candidates:
+                    canonical = api('GET','/payments/'+ident(candidate['recurso_id']))
+                    if canonical.get('checkoutSession') == row['checkout_id'] and canonical.get('subscription'):
+                        payments.append(canonical)
+                        break
             ids = {p.get('subscription') for p in payments if p.get('subscription')}
             if len(ids) != 1:
                 if ids: raise ValueError('Mais de uma assinatura no checkout.')
@@ -285,7 +296,7 @@ def instalar(app,c):
                 # Um evento de cobrança pode chegar antes do CHECKOUT_PAID.
                 reconcile_pending()
                 with banco() as db: row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND assinatura_id=?',('sandbox',sid)).fetchone()
-            if row: sync_contract(row['id'])
+            if row: sync_contract(row['id'],payment)
         elif kind.startswith('SUBSCRIPTION_'):
             with banco() as db: row = db.execute('SELECT id FROM saas_contratos WHERE ambiente=? AND assinatura_id=?',('sandbox',event['recurso_id'])).fetchone()
             if row: sync_contract(row['id'])
