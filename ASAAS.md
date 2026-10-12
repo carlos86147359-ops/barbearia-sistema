@@ -61,3 +61,6 @@ Fontes: https://docs.asaas.com/docs/checkout-com-assinatura-recorrente
 https://docs.asaas.com/reference/listar-cobrancas
 https://docs.asaas.com/docs/sobre-os-webhooks
 https://docs.asaas.com/docs/faq-assinaturas
+
+### Conta separada de homologação
+ASAAS_SANDBOX_TEST_EMAILS aceita uma lista de e-mails de proprietários de teste, separados por vírgula. Por padrão a lista é vazia. Ela libera somente operações Sandbox, nunca o painel administrativo Grupo Havo ou acesso real à agenda. Cadastre uma conta separada e autorize apenas o e-mail dessa conta no Render. Não use e-mails de clientes reais.

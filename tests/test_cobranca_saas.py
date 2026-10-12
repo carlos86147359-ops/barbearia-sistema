@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory() as tmp:
     for name in ('DATABASE_URL','RENDER'):os.environ.pop(name,None)
     os.environ.update(BARBER_DB_PATH=str(Path(tmp)/'test.db'),BILLING_ENABLED='true',ADMIN_EMAILS='',
         ASAAS_ENV='sandbox',ASAAS_API_KEY='fake-test-only',ASAAS_WEBHOOK_TOKEN='x'*48,
-        PUBLIC_BASE_URL='https://example.test')
+        PUBLIC_BASE_URL='https://example.test',ASAAS_SANDBOX_TEST_EMAILS='')
     spec=importlib.util.spec_from_file_location('asaas_test_app',ROOT/'app.py')
     appmod=importlib.util.module_from_spec(spec);spec.loader.exec_module(appmod)
     import cobranca_saas as billing
@@ -31,6 +31,10 @@ with tempfile.TemporaryDirectory() as tmp:
     assert b.post('/api/saas/checkout',headers=headers[1]).status_code==403
     assert b.get('/api/gestao/asaas').status_code==403
     assert a.post('/api/saas/checkout').status_code==403
+    os.environ['ASAAS_SANDBOX_TEST_EMAILS']='owner1@example.test'
+    assert b.get('/api/saas/assinatura').json()['disponivel'] is True
+    assert b.get('/api/gestao/asaas').status_code==403
+    os.environ['ASAAS_SANDBOX_TEST_EMAILS']=''
     before=a.get('/api/assinatura').json()
     calls=[];payment={'id':'pay_1','subscription':'sub_1','customer':'cus_1','value':90,'billingType':'CREDIT_CARD',
         'dueDate':date.today().isoformat(),'status':'PENDING','checkoutSession':'checkout_1','invoiceUrl':'https://sandbox.asaas.com/i/test'}

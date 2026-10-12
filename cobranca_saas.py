@@ -111,10 +111,14 @@ def instalar(app,c):
         if c['DATABASE_URL']: db.execute('SELECT pg_advisory_xact_lock(?)',(7821615,))
         else: db.execute('BEGIN IMMEDIATE')
 
+    def sandbox_allowed(user):
+        emails = {e.strip().lower() for e in os.environ.get('ASAAS_SANDBOX_TEST_EMAILS','').split(',') if e.strip()}
+        return c['eh_admin'](user) or str(user['email']).lower() in emails
+
     def owner(request,db,change=False):
         user = c['dono'](request,db,change)
         # Sandbox nunca é oferecido aos clientes pagantes da plataforma.
-        if not c['eh_admin'](user): raise HTTPException(403,'Homologação disponível somente ao administrador Grupo Havo.')
+        if not sandbox_allowed(user): raise HTTPException(403,'Conta não autorizada para homologação Sandbox.')
         if not enabled(): raise HTTPException(503,'Integração Sandbox ainda indisponível.')
         return user
 
@@ -135,7 +139,7 @@ def instalar(app,c):
     def summary(request:Request):
         with banco() as db:
             user = c['dono'](request,db)
-            if not enabled() or not c['eh_admin'](user): return {'disponivel':False}
+            if not enabled() or not sandbox_allowed(user): return {'disponivel':False}
             rows = db.execute('SELECT * FROM saas_contratos WHERE loja_id=? AND ambiente=? ORDER BY criado_em DESC,id DESC',
                               (user['loja_id'],'sandbox')).fetchall()
             payments = db.execute('SELECT valor_centavos,status,vencimento,pago_em,fatura_url FROM saas_cobrancas WHERE loja_id=? AND ambiente=? ORDER BY vencimento DESC,id DESC LIMIT 100',
