@@ -78,6 +78,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs): return None
 
 
+class CheckoutRejected(Exception):
+    pass
+
+
 def api(method,path,body=None):
     if not enabled(): raise HTTPException(503,'Integração Sandbox não configurada. Cobranças reais permanecem desabilitadas.')
     if not path.startswith('/') or '..' in path: raise ValueError('Rota inválida.')
@@ -90,6 +94,8 @@ def api(method,path,body=None):
     except urllib.error.HTTPError as exc:
         # Nunca devolver mensagens do provedor: podem conter dados pessoais.
         if method == 'GET' and exc.code == 404: return {'deleted':True}
+        if method == 'POST' and path == '/checkouts' and exc.code == 400:
+            raise CheckoutRejected() from None
         raise HTTPException(502,'O Asaas não concluiu a operação. Consulte o estado antes de tentar novamente.') from None
     except (OSError,ValueError):
         raise HTTPException(502,'Sem confirmação do Asaas. A tentativa foi preservada para evitar duplicidade.') from None
@@ -174,6 +180,13 @@ def instalar(app,c):
                 'items':[{'name':'Grupo Havo - Mensal TESTE','description':'Homologação Sandbox, sem cobrança real','quantity':1,'value':90}],
                 'subscription':{'cycle':'MONTHLY','nextDueDate':datetime.now(c['BRASIL']).strftime('%Y-%m-%d %H:%M:%S')}})
             checkout_id = ident(result.get('id'))
+        except CheckoutRejected:
+            with banco() as db:
+                db.execute("UPDATE saas_contratos SET status='expirada',erro=?,atualizado_em=? WHERE id=? AND status='criando'",
+                           ('Asaas recusou os dados do checkout (HTTP 400). Nenhum checkout confirmado.',now,cid))
+                row = db.execute('SELECT * FROM saas_contratos WHERE id=?',(cid,)).fetchone()
+                audit(db,row,user['id'],'checkout_rejeitado_http400')
+            raise HTTPException(422,'O Asaas recusou os dados do checkout. A tentativa foi encerrada sem cobrança.') from None
         except (HTTPException,ValueError):
             with banco() as db:
                 db.execute("UPDATE saas_contratos SET status=CASE WHEN status='criando' THEN 'incerta' ELSE status END,erro=?,atualizado_em=? WHERE id=?",
@@ -366,6 +379,24 @@ def instalar(app,c):
             db.execute("UPDATE saas_contratos SET status='cancelada',proximo_vencimento=NULL,atualizado_em=? WHERE id=?",(int(time.time()),cid))
             audit(db,row,user['id'],'cancelamento_confirmado_asaas')
         return {'status':'cancelada'}
+
+    @app.post('/api/gestao/asaas/{cid}/encerrar-rejeitada')
+    def reject_confirmed(cid:str,request:Request):
+        # Exceção operacional SOMENTE Sandbox: administrador conferiu HTTP 400
+        # nos logs privados do Asaas. Nunca inferir rejeição a partir de timeout.
+        with banco() as db:
+            user = c['administrador'](request,db,True)
+            if not enabled(): raise HTTPException(503,'Sandbox indisponível.')
+            lock(db)
+            row = db.execute("SELECT * FROM saas_contratos WHERE id=? AND ambiente='sandbox'",(cid,)).fetchone()
+            if not row: raise HTTPException(404,'Tentativa não encontrada.')
+            if row['checkout_id'] or row['assinatura_id'] or row['status'] not in ('incerta','expirada'):
+                raise HTTPException(409,'Somente tentativa incerta sem checkout pode ser encerrada após conferência.')
+            if row['status']=='expirada': return {'status':'expirada'}
+            db.execute("UPDATE saas_contratos SET status='expirada',erro=?,atualizado_em=? WHERE id=?",
+                       ('Administrador confirmou rejeição HTTP 400 nos logs do Asaas.',int(time.time()),cid))
+            audit(db,row,user['id'],'rejeicao_http400_conferida_manualmente')
+        return {'status':'expirada'}
 
     @app.get('/api/gestao/asaas')
     def admin_report(request:Request):
