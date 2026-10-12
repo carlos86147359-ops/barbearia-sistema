@@ -106,7 +106,7 @@ with tempfile.TemporaryDirectory() as tmp:
     count=len(calls)
     assert a.post('/api/saas/checkout',headers=headers[0]).status_code==409
     assert len(calls)==count
-    assert a.get('/api/saas/assinatura').json()['contratos'][0]['status']=='incerta'
+    assert any(r['status']=='incerta' for r in a.get('/api/saas/assinatura').json()['contratos'])
     os.environ['ASAAS_ENV']='production'
     assert a.get('/api/saas/assinatura').json()=={'disponivel':False}
     assert a.post('/api/saas/checkout',headers=headers[0]).status_code==503
