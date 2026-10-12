@@ -35,6 +35,8 @@ from notificacoes import TABLES as PUSH_TABLES
 TABLES.update(PUSH_TABLES)
 from promocoes import TABLES as PROMO_TABLES
 TABLES.update(PROMO_TABLES)
+from cobranca_saas import TABLES as SAAS_TABLES
+TABLES.update(SAAS_TABLES)
 
 class EmailPedido(BaseModel):
     email: str = Field(min_length=3,max_length=150)

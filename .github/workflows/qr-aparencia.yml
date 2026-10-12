@@ -25,6 +25,8 @@ jobs:
         run: PYTHONPATH=. python tests/test_aparencia_qr.py
       - name: Validar assinaturas e transacoes SQLite
         run: PYTHONPATH=. python tests/test_mensalistas.py
+      - name: Validar Asaas Sandbox sem rede e sem credenciais reais
+        run: PYTHONPATH=. python tests/test_cobranca_saas.py
       - name: Validar promocoes e recebimentos em SQLite
         run: PYTHONPATH=. python tests/test_promocoes.py
       - name: Instalar navegador de teste
