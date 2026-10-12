@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory() as tmp:
             if fail:raise HTTPException(502,'timeout')
             return {'id':'checkout_1'}
         if method=='PUT' and path=='/subscriptions/sub_1':sub['status']='INACTIVE';return sub.copy()
-        if path.startswith('/payments?'):return {'data':[payment.copy()] if visible else []}
+        if path.startswith('/payments?'):return {'data':[]}  # listagem pode atrasar
         if path=='/subscriptions/sub_1':return sub.copy()
         if path.startswith('/subscriptions/sub_1/payments?'):return {'data':[payment.copy()] if visible else [],'hasMore':False}
         if path=='/payments/pay_1':return payment.copy()
@@ -70,7 +70,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert b.post('/api/saas/contratos/'+cid+'/cancelar',headers=headers[1]).status_code==404
     os.environ['ADMIN_EMAILS']='owner0@example.test'
     wh={'asaas-access-token':'x'*48}
-    payload={'id':'evt_1','event':'CHECKOUT_PAID','checkout':{'id':'checkout_1'}}
+    payload={'id':'evt_1','event':'PAYMENT_CREATED','payment':{'id':'pay_1'}}
     assert public.post('/api/saas/webhook',json=payload).status_code==401
     assert public.post('/api/saas/webhook',content=b'x'*128001,headers=wh).status_code==413
     assert public.post('/api/saas/webhook',json={'id':'e','event':'PAYMENT_CREATED','payment':{'id':'../../customers'}},headers=wh).status_code==422
