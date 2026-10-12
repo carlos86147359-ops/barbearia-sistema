@@ -171,7 +171,7 @@ def instalar(app,c):
             result = api('POST','/checkouts',{'externalReference':'havo:'+cid,
                 'billingTypes':['CREDIT_CARD'],'chargeTypes':['RECURRENT'],'minutesToExpire':60,
                 'callback':{k:base+'/painel#plano' for k in ('successUrl','cancelUrl','expiredUrl')},
-                'items':[{'name':'Grupo Havo - Plano mensal (TESTE)','description':'Homologação Sandbox, sem cobrança real','quantity':1,'value':90}],
+                'items':[{'name':'Grupo Havo - Mensal TESTE','description':'Homologação Sandbox, sem cobrança real','quantity':1,'value':90}],
                 'subscription':{'cycle':'MONTHLY','nextDueDate':datetime.now(c['BRASIL']).strftime('%Y-%m-%d %H:%M:%S')}})
             checkout_id = ident(result.get('id'))
         except (HTTPException,ValueError):

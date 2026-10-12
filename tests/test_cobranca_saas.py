@@ -44,6 +44,7 @@ with tempfile.TemporaryDirectory() as tmp:
         global fail
         calls.append((method,path,body))
         if method=='POST' and path=='/checkouts':
+            assert len(body['items'][0]['name'])<=30
             assert body['items'][0]['value']==90 and body['chargeTypes']==['RECURRENT']
             assert body['callback']['successUrl']=='https://example.test/painel#plano'
             if fail:raise HTTPException(502,'timeout')
