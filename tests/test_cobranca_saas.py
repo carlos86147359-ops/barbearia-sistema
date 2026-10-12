@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 ROOT=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory() as tmp:
     for name in ('DATABASE_URL','RENDER'):os.environ.pop(name,None)
+    if os.environ.get('TEST_ASAAS_DATABASE_URL'): os.environ['DATABASE_URL']=os.environ['TEST_ASAAS_DATABASE_URL']
     os.environ.update(BARBER_DB_PATH=str(Path(tmp)/'test.db'),BILLING_ENABLED='true',ADMIN_EMAILS='',
         ASAAS_ENV='sandbox',ASAAS_API_KEY='fake-test-only',ASAAS_WEBHOOK_TOKEN='x'*48,
         PUBLIC_BASE_URL='https://example.test',ASAAS_SANDBOX_TEST_EMAILS='')
