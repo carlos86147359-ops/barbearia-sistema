@@ -1,0 +1,45 @@
+const assert=require('node:assert/strict');
+const {chromium}=require('playwright');
+const fs=require('node:fs/promises');
+(async()=>{
+ const browser=await chromium.launch();
+ const context=await browser.newContext({viewport:{width:390,height:844}});
+ const page=await context.newPage(),errors=[],requests=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ const base='http://127.0.0.1:8788';
+ const r=await context.request.post(base+'/api/cadastro',{data:{nome:'Teste Contratação',slug:'billing-browser',email:'billing-browser@example.test',senha:'SenhaTeste!12345',aceite_termos:true}});
+ assert.equal(r.status(),201,await r.text());
+ const session=await (await context.request.get(base+'/api/sessao')).json();
+ let state={disponivel:true,ambiente:'production',valor_centavos:6000,vendas_habilitadas:true,contratos:[],pagamentos:[]};
+ // Mock somente do provedor/contratação, sem rede financeira, em servidor temporário.
+ await page.route('**/api/saas/assinatura',route=>route.fulfill({json:state}));
+ await page.route('**/api/saas/checkout',async route=>{
+  requests.push(route.request().postDataJSON());
+  state.contratos=[{id:'test-contract',ambiente:'production',status:'checkout',valor_centavos:6000,checkout_url:'https://www.asaas.com/checkoutSession/show?id=test',condicoes:{ultimo_vencimento:'2027-01-13'}}];
+  await route.fulfill({json:state.contratos[0]});
+ });
+ await page.goto(base+'/painel#plano');await page.reload();
+ await page.getByRole('heading',{name:'Minha assinatura',exact:true}).waitFor();
+ await page.locator('[data-real-contract]').click();
+ await page.getByRole('button',{name:'Aceitar e abrir checkout',exact:true}).click();
+ await page.getByRole('link',{name:'Continuar no checkout seguro',exact:true}).waitFor();
+ assert.equal(requests.length,1);
+ assert.equal(requests[0].aceite_condicoes,'tres_meses_60_depois_nova_contratacao_90_v1');
+ assert.match(await page.locator('#asaas-sandbox').innerText(),/nova contratação de R\$ 90/);
+ await fs.mkdir('test-results',{recursive:true});
+ for(const theme of ['claro','escuro']){
+  const response=await context.request.put(base+'/api/aparencia',{headers:{'X-CSRF-Token':session.csrf},data:{tema:theme}});assert.equal(response.status(),200);
+  for(const width of [390,768,1440]){
+   await page.setViewportSize({width,height:900});await page.reload();
+   await page.getByRole('link',{name:'Continuar no checkout seguro',exact:true}).waitFor();
+   const size=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
+   assert.ok(size.scroll<=size.width+1,JSON.stringify(size));
+   await page.screenshot({path:'test-results/cobranca-'+theme+'-'+width+'.png',fullPage:true});
+  }
+ }
+ state={...state,valor_centavos:9000,contratos:[],vendas_habilitadas:false};
+ await page.reload();await page.getByRole('button',{name:'Contratar R$ 90/mês',exact:true}).waitFor();
+ assert.equal(await page.locator('[data-real-contract]').isDisabled(),true);
+ assert.equal(errors.length,0,errors.join('\n'));
+ await browser.close();console.log('OK: aceite, checkout hospedado, oferta, bloqueio, temas e responsividade da cobrança.');
+})().catch(e=>{console.error(e);process.exit(1)});

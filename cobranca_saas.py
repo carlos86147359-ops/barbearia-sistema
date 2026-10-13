@@ -1,6 +1,6 @@
-"""Cobrança Grupo Havo: homologação Asaas, isolada das mensalidades e do acesso real.
+"""Cobrança Grupo Havo: ambientes separados e confirmação financeira no servidor.
 
-Produção está deliberadamente bloqueada até a homologação financeira completa.
+Produção exige habilitação explícita; Sandbox nunca libera acesso real.
 Nenhum cartão, chave de API ou corpo bruto de webhook é persistido.
 """
 import asyncio
@@ -25,6 +25,7 @@ DDL = {
     'saas_contratos': 'id TEXT PRIMARY KEY,loja_id TEXT NOT NULL,ambiente TEXT NOT NULL,usuario_id TEXT NOT NULL,valor_centavos INTEGER NOT NULL,checkout_id TEXT,assinatura_id TEXT,cliente_id TEXT,status TEXT NOT NULL,proximo_vencimento TEXT,pago_ate TEXT,criado_em BIGINT NOT NULL,atualizado_em BIGINT NOT NULL,erro TEXT',
     'saas_cobrancas': 'id TEXT PRIMARY KEY,loja_id TEXT NOT NULL,contrato_id TEXT NOT NULL,ambiente TEXT NOT NULL,provedor_id TEXT NOT NULL,valor_centavos INTEGER NOT NULL,status TEXT NOT NULL,vencimento TEXT NOT NULL,pago_em TEXT,periodo_fim TEXT NOT NULL,fatura_url TEXT,atualizado_em BIGINT NOT NULL,UNIQUE(ambiente,provedor_id)',
     'saas_webhooks': 'id TEXT PRIMARY KEY,ambiente TEXT NOT NULL,tipo TEXT NOT NULL,recurso_id TEXT NOT NULL,referencia TEXT,status TEXT NOT NULL,tentativas INTEGER NOT NULL,proxima_tentativa BIGINT NOT NULL,criado_em BIGINT NOT NULL,processado_em BIGINT,erro TEXT',
+    'saas_condicoes': 'id TEXT PRIMARY KEY,loja_id TEXT NOT NULL,ambiente TEXT NOT NULL,oferta TEXT NOT NULL,primeiro_vencimento TEXT NOT NULL,ultimo_vencimento TEXT,aceite_em BIGINT NOT NULL',
     'saas_auditoria': 'id TEXT PRIMARY KEY,loja_id TEXT NOT NULL,contrato_id TEXT NOT NULL,usuario_id TEXT NOT NULL,acao TEXT NOT NULL,criado_em BIGINT NOT NULL',
 }
 TABLES = {name: [p.strip().split()[0] for p in ddl.split(',UNIQUE(', 1)[0].split(',')] for name, ddl in DDL.items()}
@@ -44,9 +45,45 @@ EVENTS = {'CHECKOUT_CREATED','CHECKOUT_PAID','CHECKOUT_CANCELED','CHECKOUT_EXPIR
           'PAYMENT_AWAITING_CHARGEBACK_REVERSAL'}
 
 
+def environment():
+    value = os.environ.get('ASAAS_ENV', '')
+    return value if value in ('sandbox', 'production') else None
+
+
+def api_key():
+    return os.environ.get('ASAAS_PRODUCTION_API_KEY' if environment() == 'production' else 'ASAAS_API_KEY', '')
+
+
+def webhook_secret():
+    return os.environ.get('ASAAS_PRODUCTION_WEBHOOK_TOKEN' if environment() == 'production' else 'ASAAS_WEBHOOK_TOKEN', '')
+
+
 def enabled():
-    return (os.environ.get('ASAAS_ENV') == 'sandbox' and bool(os.environ.get('ASAAS_API_KEY'))
-            and len(os.environ.get('ASAAS_WEBHOOK_TOKEN','')) >= 32)
+    return bool(environment() and api_key() and len(webhook_secret()) >= 32 and webhook_secret() != api_key())
+
+
+def limited_offer_enabled():
+    return environment() == 'production' or (environment() == 'sandbox' and os.environ.get('ASAAS_SANDBOX_PROMO_TEST','').lower() == 'true')
+
+
+def production_sales_enabled():
+    return os.environ.get('ASAAS_PRODUCTION_ENABLED', '').lower() == 'true'
+
+
+def add_months(day, count):
+    d = date.fromisoformat(day)
+    total = d.year * 12 + d.month - 1 + count
+    year, month = divmod(total, 12)
+    month += 1
+    return d.replace(year=year, month=month, day=min(d.day, calendar.monthrange(year, month)[1])).isoformat()
+
+
+def production_access(db, shop_id, today):
+    # Somente recebimentos reais confirmados e período vigente, nunca redirects.
+    paid = db.execute("SELECT MAX(periodo_fim) AS fim FROM saas_cobrancas WHERE loja_id=? AND ambiente=? AND status IN ('RECEIVED','CONFIRMED') AND vencimento<=? AND periodo_fim>?",
+                      (shop_id, 'production', today, today)).fetchone()['fim']
+    return paid
+
 
 
 def cents(value):
@@ -69,7 +106,7 @@ def month_end(day):
 def safe_invoice(url):
     if not isinstance(url,str): return None
     p = urllib.parse.urlparse(url)
-    if p.scheme == 'https' and p.hostname == 'sandbox.asaas.com' and not p.username and p.port in (None,443):
+    if p.scheme == 'https' and p.hostname == ('www.asaas.com' if environment() == 'production' else 'sandbox.asaas.com') and not p.username and p.port in (None,443):
         return url
     return None
 
@@ -83,11 +120,11 @@ class CheckoutRejected(Exception):
 
 
 def api(method,path,body=None):
-    if not enabled(): raise HTTPException(503,'Integração Sandbox não configurada. Cobranças reais permanecem desabilitadas.')
+    if not enabled(): raise HTTPException(503,'Integração Asaas não configurada.')
     if not path.startswith('/') or '..' in path: raise ValueError('Rota inválida.')
-    req = urllib.request.Request('https://api-sandbox.asaas.com/v3'+path,
+    req = urllib.request.Request(('https://api.asaas.com/v3' if environment() == 'production' else 'https://api-sandbox.asaas.com/v3')+path,
         data=json.dumps(body).encode() if body is not None else None,method=method,
-        headers={'access_token':os.environ['ASAAS_API_KEY'],'Content-Type':'application/json','User-Agent':'GrupoHavo/1.0'})
+        headers={'access_token':api_key(),'Content-Type':'application/json','User-Agent':'GrupoHavo/1.0'})
     try:
         with urllib.request.build_opener(NoRedirect()).open(req,timeout=65) as response:
             return json.loads(response.read(1_000_000))
@@ -124,8 +161,8 @@ def instalar(app,c):
     def owner(request,db,change=False):
         user = c['dono'](request,db,change)
         # Sandbox nunca é oferecido aos clientes pagantes da plataforma.
-        if not sandbox_allowed(user): raise HTTPException(403,'Conta não autorizada para homologação Sandbox.')
-        if not enabled(): raise HTTPException(503,'Integração Sandbox ainda indisponível.')
+        if environment() == 'sandbox' and not sandbox_allowed(user): raise HTTPException(403,'Conta não autorizada para homologação Sandbox.')
+        if not enabled(): raise HTTPException(503,'Integração Asaas ainda indisponível.')
         return user
 
     def audit(db,row,user,action):
@@ -133,28 +170,47 @@ def instalar(app,c):
                    (secrets.token_hex(16),row['loja_id'],row['id'],user,action,int(time.time())))
 
     def contract_view(row):
-        out = {k:row[k] for k in ('id','valor_centavos','status','proximo_vencimento','pago_ate','erro','criado_em')}
+        out = {k:row[k] for k in ('ambiente','id','valor_centavos','status','proximo_vencimento','pago_ate','erro','criado_em')}
         if row['checkout_id'] and row['status'] == 'checkout':
-            out['checkout_url'] = 'https://sandbox.asaas.com/checkoutSession/show?id='+urllib.parse.quote(row['checkout_id'])
+            out['checkout_url'] = ('https://www.asaas.com' if row['ambiente'] == 'production' else 'https://sandbox.asaas.com')+'/checkoutSession/show?id='+urllib.parse.quote(row['checkout_id'])
+        with banco() as db: terms = db.execute('SELECT * FROM saas_condicoes WHERE id=?',(row['id'],)).fetchone()
+        out['condicoes'] = dict(terms) if terms else None
         return out
 
     @app.get('/cobranca-saas.js')
     def script(): return FileResponse(c['ROOT']/'cobranca-saas.js',media_type='application/javascript')
 
+    def used_offer(db=None, shop=None):
+        def check(conn):
+            return bool(conn.execute("SELECT 1 FROM saas_condicoes t JOIN saas_contratos s ON s.id=t.id WHERE t.loja_id=? AND t.ambiente=? AND t.oferta=? AND (s.assinatura_id IS NOT NULL OR s.status IN ('criando','incerta','checkout')) LIMIT 1",
+                                     (shop, environment(), 'tres_meses_60_v1')).fetchone())
+        if db is not None: return check(db)
+        with banco() as conn: return check(conn)
+
     @app.get('/api/saas/assinatura')
     def summary(request:Request):
         with banco() as db:
             user = c['dono'](request,db)
-            if not enabled() or not sandbox_allowed(user): return {'disponivel':False}
+            if not enabled() or (environment() == 'sandbox' and not sandbox_allowed(user)): return {'disponivel':False}
+            if environment() == 'production' and db.execute('SELECT 1 FROM cortesias WHERE loja_id=?',(user['loja_id'],)).fetchone(): return {'disponivel':False}
             rows = db.execute('SELECT * FROM saas_contratos WHERE loja_id=? AND ambiente=? ORDER BY criado_em DESC,id DESC',
-                              (user['loja_id'],'sandbox')).fetchall()
+                              (user['loja_id'],environment())).fetchall()
             payments = db.execute('SELECT valor_centavos,status,vencimento,pago_em,fatura_url FROM saas_cobrancas WHERE loja_id=? AND ambiente=? ORDER BY vencimento DESC,id DESC LIMIT 100',
-                                  (user['loja_id'],'sandbox')).fetchall()
-        return {'disponivel':True,'ambiente':'sandbox','valor_centavos':9000,
+                                  (user['loja_id'],environment())).fetchall()
+        return {'disponivel':True,'ambiente':environment(),'oferta_limitada':limited_offer_enabled(),'valor_centavos':6000 if limited_offer_enabled() and not used_offer(db=None, shop=user['loja_id']) else 9000,
+                'vendas_habilitadas':environment() == 'sandbox' or production_sales_enabled(),
                 'contratos':[contract_view(r) for r in rows], 'pagamentos':[dict(r) for r in payments]}
 
     @app.post('/api/saas/checkout')
-    def checkout(request:Request):
+    async def checkout(request:Request):
+        body = {}
+        if limited_offer_enabled() and enabled():
+            raw = await request.body()
+            if len(raw)>4096: raise HTTPException(413,'Pedido excede o limite.')
+            try: body = json.loads(raw)
+            except (ValueError,TypeError): raise HTTPException(422,'Confirme as condições da contratação.') from None
+        if limited_offer_enabled() and enabled() and (not isinstance(body,dict) or body.get('aceite_condicoes') != 'tres_meses_60_depois_nova_contratacao_90_v1'):
+            raise HTTPException(422,'Confirme as condições da contratação.')
         now = int(time.time())
         base = os.environ.get('PUBLIC_BASE_URL','').rstrip('/')
         p = urllib.parse.urlparse(base)
@@ -162,23 +218,39 @@ def instalar(app,c):
             raise HTTPException(503,'Configure PUBLIC_BASE_URL com a URL HTTPS do aplicativo.')
         with banco() as db:
             user = owner(request,db,True)
+            if environment() == 'production':
+                if not production_sales_enabled(): raise HTTPException(503,'Novas contratações reais ainda não estão habilitadas.')
+                if db.execute('SELECT 1 FROM cortesias WHERE loja_id=?',(user['loja_id'],)).fetchone():
+                    raise HTTPException(409,'Conta liberada por cortesia. Nenhuma cobrança necessária.')
             c['limitar'](request,'asaas-checkout',8,3600)
             lock(db)
-            old = db.execute("SELECT * FROM saas_contratos WHERE loja_id=? AND ambiente='sandbox' AND status NOT IN ('cancelada','expirada')",(user['loja_id'],)).fetchone()
+            old = db.execute("SELECT * FROM saas_contratos WHERE loja_id=? AND ambiente=? AND status NOT IN ('cancelada','expirada')",(user['loja_id'],environment())).fetchone()
             if old:
                 if old['status'] == 'checkout' and old['checkout_id']: return contract_view(old)
                 raise HTTPException(409,'Já existe uma contratação ou tentativa em conferência. Sincronize antes de criar outra.')
+            first_due = datetime.now(c['BRASIL']).date().isoformat()
+            promo = limited_offer_enabled() and not used_offer(db,user['loja_id'])
+            price = 6000 if promo else 9000
+            last_due = add_months(first_due,2) if promo else None
+            if environment() == 'production':
+                paid_until = production_access(db,user['loja_id'],first_due)
+                if paid_until:
+                    raise HTTPException(409,'Seu período pago ainda está vigente. Aguarde o fim do período para nova contratação.')
             cid = secrets.token_hex(24)
             db.execute('INSERT INTO saas_contratos(id,loja_id,ambiente,usuario_id,valor_centavos,status,criado_em,atualizado_em) VALUES(?,?,?,?,?,?,?,?)',
-                       (cid,user['loja_id'],'sandbox',user['id'],9000,'criando',now,now))
+                       (cid,user['loja_id'],environment(),user['id'],price,'criando',now,now))
+            db.execute('INSERT INTO saas_condicoes(id,loja_id,ambiente,oferta,primeiro_vencimento,ultimo_vencimento,aceite_em) VALUES(?,?,?,?,?,?,?)',
+                       (cid,user['loja_id'],environment(),'tres_meses_60_v1' if promo else 'mensal_90_v1',first_due,last_due,now))
         # A tentativa é confirmada no banco ANTES da chamada externa.
         # Timeout nunca provoca uma segunda criação automática.
         try:
             result = api('POST','/checkouts',{'externalReference':'havo:'+cid,
                 'billingTypes':['CREDIT_CARD'],'chargeTypes':['RECURRENT'],'minutesToExpire':60,
                 'callback':{k:base+'/painel#plano' for k in ('successUrl','cancelUrl','expiredUrl')},
-                'items':[{'name':'Grupo Havo - Mensal TESTE','description':'Homologação Sandbox, sem cobrança real','quantity':1,'value':90}],
-                'subscription':{'cycle':'MONTHLY','nextDueDate':datetime.now(c['BRASIL']).strftime('%Y-%m-%d %H:%M:%S')}})
+                'items':[{'name':'Grupo Havo - Mensal TESTE' if environment() == 'sandbox' else 'Grupo Havo - Mensal',
+                          'description':'Homologação Sandbox, sem cobrança real' if environment() == 'sandbox' else ('R$60 por mês por 3 ciclos. Depois exige nova contratação de R$90/mês.' if promo else 'R$90 por mês. Recorrência mensal até cancelamento.'),
+                          'quantity':1,'value':price/100}],
+                'subscription':{'cycle':'MONTHLY','nextDueDate':datetime.now(c['BRASIL']).strftime('%Y-%m-%d %H:%M:%S'),**({'endDate':last_due+' 23:59:59'} if last_due else {})}})
             checkout_id = ident(result.get('id'))
         except CheckoutRejected:
             with banco() as db:
@@ -211,12 +283,30 @@ def instalar(app,c):
         paid = payment.get('paymentDate') or payment.get('confirmedDate') or payment.get('clientPaymentDate')
         if paid: paid = date.fromisoformat(str(paid)[:10]).isoformat()
         # Pagamento atrasado dá um novo mês a partir da quitação, sem contar duas vezes.
-        end = month_end(max(due,paid or due))
+        end = month_end(due if row['ambiente'] == 'production' else max(due,paid or due))
+        if row['ambiente'] == 'production':
+            terms = db.execute('SELECT * FROM saas_condicoes WHERE id=?',(row['id'],)).fetchone()
+            if not terms or due < terms['primeiro_vencimento'] or (terms['ultimo_vencimento'] and due > terms['ultimo_vencimento']):
+                raise ValueError('Cobrança fora do período contratado.')
+            anchor = date.fromisoformat(terms['primeiro_vencimento'])
+            due_day = date.fromisoformat(due)
+            cycle = (due_day.year-anchor.year)*12 + due_day.month-anchor.month
+            if due != add_months(terms['primeiro_vencimento'],cycle):
+                raise ValueError('Vencimento fora do calendário contratado.')
+            end = add_months(terms['primeiro_vencimento'],cycle+1)
         db.execute('INSERT INTO saas_cobrancas(id,loja_id,contrato_id,ambiente,provedor_id,valor_centavos,status,vencimento,pago_em,periodo_fim,fatura_url,atualizado_em) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ambiente,provedor_id) DO UPDATE SET status=excluded.status,pago_em=excluded.pago_em,periodo_fim=excluded.periodo_fim,fatura_url=excluded.fatura_url,atualizado_em=excluded.atualizado_em',
-                   ('sandbox:'+pid,row['loja_id'],row['id'],'sandbox',pid,value,status,due,paid,end,safe_invoice(payment.get('invoiceUrl')),int(time.time())))
+                   (row['ambiente']+':'+pid,row['loja_id'],row['id'],row['ambiente'],pid,value,status,due,paid,end,safe_invoice(payment.get('invoiceUrl')),int(time.time())))
 
     def sync_contract(cid,payment_hint=None):
-        with banco() as db: found = db.execute('SELECT * FROM saas_contratos WHERE id=? AND ambiente=?',(cid,'sandbox')).fetchone()
+        # Serializa leituras canônicas e gravações inclusive entre processos.
+        # Nenhuma consulta antiga sobrescreve um estorno ou cancelamento novo.
+        with banco() as db:
+            lock(db)
+            invalid = sync_locked(db,cid,payment_hint)
+        if invalid: raise ValueError('Há cobrança fora das condições contratadas; conferência necessária.')
+
+    def sync_locked(db,cid,payment_hint=None):
+        found = db.execute('SELECT * FROM saas_contratos WHERE id=? AND ambiente=?',(cid,environment())).fetchone()
         if not found or not found['checkout_id']: return
         row = dict(found)
         sid = row['assinatura_id']
@@ -227,8 +317,7 @@ def instalar(app,c):
             if payment_hint and payment_hint.get('checkoutSession') == row['checkout_id']:
                 payments.append(payment_hint)
             if not any(p.get('subscription') for p in payments):
-                with banco() as db:
-                    candidates = db.execute("SELECT DISTINCT recurso_id FROM saas_webhooks WHERE ambiente='sandbox' AND tipo LIKE ? AND criado_em>=? ORDER BY recurso_id LIMIT 10",('PAYMENT_%',row['criado_em'])).fetchall()
+                candidates = db.execute("SELECT DISTINCT recurso_id FROM saas_webhooks WHERE ambiente=? AND tipo LIKE ? AND criado_em>=? ORDER BY recurso_id LIMIT 100",(environment(),'PAYMENT_%',row['criado_em'])).fetchall()
                 for candidate in candidates:
                     canonical = api('GET','/payments/'+ident(candidate['recurso_id']))
                     if canonical.get('checkoutSession') == row['checkout_id'] and canonical.get('subscription'):
@@ -249,34 +338,46 @@ def instalar(app,c):
         if not subscription.get('deleted'):
             if subscription.get('id') != sid or subscription.get('customer') != row['cliente_id'] or subscription.get('cycle') != 'MONTHLY' or subscription.get('billingType') != 'CREDIT_CARD' or cents(subscription.get('value')) != row['valor_centavos']:
                 raise ValueError('Assinatura fora do contrato.')
+        terms = db.execute('SELECT * FROM saas_condicoes WHERE id=?',(cid,)).fetchone()
+        if (row['ambiente'] == 'production' or (terms and terms['ultimo_vencimento'])) and not subscription.get('deleted'):
+            expected_end = terms['ultimo_vencimento'] if terms else None
+            actual_end = str(subscription.get('endDate') or '')[:10] or None
+            if not terms or actual_end != expected_end:
+                raise ValueError('Prazo da recorrência diferente do contrato.')
         # Lista paginada, com limite explícito de trabalho por passagem.
         for offset in range(0,1000,100):
             page = api('GET','/subscriptions/'+sid+'/payments?'+urllib.parse.urlencode({'limit':100,'offset':offset}))
             payments.extend(page.get('data',[]))
             if not page.get('hasMore'): break
-        with banco() as db:
-            lock(db)
-            current = db.execute('SELECT * FROM saas_contratos WHERE id=?',(cid,)).fetchone()
-            if current['assinatura_id'] and current['assinatura_id'] != sid: raise ValueError('Assinatura alterada.')
-            for payment in payments: store_payment(db,row,payment)
-            paid = db.execute("SELECT MAX(periodo_fim) AS fim FROM saas_cobrancas WHERE contrato_id=? AND status IN ('RECEIVED','CONFIRMED','RECEIVED_IN_CASH')",(cid,)).fetchone()['fim']
-            late = db.execute("SELECT COUNT(*) AS n FROM saas_cobrancas WHERE contrato_id=? AND status IN ('OVERDUE','CREDIT_CARD_CAPTURE_REFUSED')",(cid,)).fetchone()['n']
-            canceled = subscription.get('deleted') or subscription.get('status') == 'INACTIVE'
-            status = 'cancelada' if canceled else 'atrasada' if late else 'ativa' if paid else 'aguardando_pagamento'
-            next_due = subscription.get('nextDueDate')
-            if next_due: next_due = date.fromisoformat(next_due[:10]).isoformat()
-            db.execute('UPDATE saas_contratos SET assinatura_id=?,cliente_id=?,status=?,proximo_vencimento=?,pago_ate=?,erro=NULL,atualizado_em=? WHERE id=?',
-                       (sid,row['cliente_id'],status,None if canceled else next_due,paid,int(time.time()),cid))
-        # IMPORTANTE: Sandbox NÃO escreve em assinaturas/pagamentos/cortesias.
+        if payment_hint and payment_hint.get('subscription') == sid:
+            payments = [p for p in payments if p.get('id') != payment_hint.get('id')] + [payment_hint]
+        current = db.execute('SELECT * FROM saas_contratos WHERE id=?',(cid,)).fetchone()
+        if current['assinatura_id'] and current['assinatura_id'] != sid: raise ValueError('Assinatura alterada.')
+        invalid = False
+        for payment in payments:
+            try: store_payment(db,row,payment)
+            except ValueError: invalid = True
+        paid = db.execute("SELECT MAX(periodo_fim) AS fim FROM saas_cobrancas WHERE contrato_id=? AND status IN ('RECEIVED','CONFIRMED','RECEIVED_IN_CASH')",(cid,)).fetchone()['fim']
+        late = db.execute("SELECT COUNT(*) AS n FROM saas_cobrancas WHERE contrato_id=? AND status IN ('OVERDUE','CREDIT_CARD_CAPTURE_REFUSED')",(cid,)).fetchone()['n']
+        ended = terms and terms['ultimo_vencimento'] and datetime.now(c['BRASIL']).date().isoformat() > terms['ultimo_vencimento']
+        canceled = subscription.get('deleted') or subscription.get('status') == 'INACTIVE' or ended
+        status = 'cancelada' if canceled else 'atrasada' if late else 'ativa' if paid else 'aguardando_pagamento'
+        next_due = subscription.get('nextDueDate')
+        if next_due: next_due = date.fromisoformat(next_due[:10]).isoformat()
+        db.execute('UPDATE saas_contratos SET assinatura_id=?,cliente_id=?,status=?,proximo_vencimento=?,pago_ate=?,erro=?,atualizado_em=? WHERE id=?',
+                   (sid,row['cliente_id'],status,None if canceled else next_due,paid,'Cobrança fora das condições; conferência necessária.' if invalid else None,int(time.time()),cid))
+        # Confirmações/estornos válidos são preservados mesmo se outra cobrança exigir revisão.
+        return invalid
+        # Acesso real é calculado pelos recebimentos de produção, sem alterar Pix/cortesia.
 
     def process_event(event):
         kind = event['tipo']
         if kind.startswith('CHECKOUT_'):
             with banco() as db:
                 lock(db)
-                row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND checkout_id=?',('sandbox',event['recurso_id'])).fetchone()
+                row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND checkout_id=?',(environment(),event['recurso_id'])).fetchone()
                 if not row and event['referencia'] and event['referencia'].startswith('havo:'):
-                    row = db.execute("SELECT * FROM saas_contratos WHERE id=? AND ambiente='sandbox' AND status IN ('criando','incerta')",(event['referencia'][5:],)).fetchone()
+                    row = db.execute("SELECT * FROM saas_contratos WHERE id=? AND ambiente=? AND status IN ('criando','incerta')",(event['referencia'][5:],environment())).fetchone()
                     if row:
                         db.execute("UPDATE saas_contratos SET checkout_id=?,status='checkout',erro=NULL WHERE id=?",(event['recurso_id'],row['id']))
                 cid = row['id'] if row else None
@@ -287,24 +388,31 @@ def instalar(app,c):
         elif kind.startswith('PAYMENT_'):
             payment = api('GET','/payments/'+ident(event['recurso_id']))
             sid = payment.get('subscription')
+            if payment.get('deleted') and not sid:
+                with banco() as db:
+                    known = db.execute('SELECT p.*,s.assinatura_id,s.cliente_id FROM saas_cobrancas p JOIN saas_contratos s ON s.id=p.contrato_id AND s.ambiente=p.ambiente WHERE p.provedor_id=? AND p.ambiente=?',(event['recurso_id'],environment())).fetchone()
+                if known:
+                    payment = {'id':event['recurso_id'],'subscription':known['assinatura_id'],'customer':known['cliente_id'],
+                               'value':known['valor_centavos']/100,'billingType':'CREDIT_CARD','dueDate':known['vencimento'],'deleted':True,'status':'DELETED'}
+                    sid = known['assinatura_id']
             if not sid: return
             with banco() as db:
-                row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND assinatura_id=?',('sandbox',sid)).fetchone()
+                row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND assinatura_id=?',(environment(),sid)).fetchone()
                 if not row and payment.get('checkoutSession'):
-                    row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND checkout_id=?',('sandbox',payment['checkoutSession'])).fetchone()
+                    row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND checkout_id=?',(environment(),payment['checkoutSession'])).fetchone()
             if not row:
                 # Um evento de cobrança pode chegar antes do CHECKOUT_PAID.
                 reconcile_pending()
-                with banco() as db: row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND assinatura_id=?',('sandbox',sid)).fetchone()
+                with banco() as db: row = db.execute('SELECT * FROM saas_contratos WHERE ambiente=? AND assinatura_id=?',(environment(),sid)).fetchone()
             if row: sync_contract(row['id'],payment)
         elif kind.startswith('SUBSCRIPTION_'):
-            with banco() as db: row = db.execute('SELECT id FROM saas_contratos WHERE ambiente=? AND assinatura_id=?',('sandbox',event['recurso_id'])).fetchone()
+            with banco() as db: row = db.execute('SELECT id FROM saas_contratos WHERE ambiente=? AND assinatura_id=?',(environment(),event['recurso_id'])).fetchone()
             if row: sync_contract(row['id'])
             else: reconcile_pending()
 
     def reconcile_pending():
         with banco() as db:
-            rows = db.execute("SELECT id FROM saas_contratos WHERE ambiente='sandbox' AND checkout_id IS NOT NULL AND assinatura_id IS NULL AND status NOT IN ('cancelada','expirada') ORDER BY atualizado_em LIMIT 10").fetchall()
+            rows = db.execute("SELECT id FROM saas_contratos WHERE ambiente=? AND checkout_id IS NOT NULL AND assinatura_id IS NULL AND status NOT IN ('cancelada','expirada') ORDER BY atualizado_em LIMIT 10",(environment(),)).fetchall()
         for row in rows: sync_contract(row['id'])
 
     def tick():
@@ -312,7 +420,7 @@ def instalar(app,c):
         now = int(time.time())
         with banco() as db:
             lock(db)
-            events = [dict(r) for r in db.execute("SELECT * FROM saas_webhooks WHERE ambiente='sandbox' AND status IN ('pendente','processando') AND proxima_tentativa<=? ORDER BY criado_em LIMIT 10",(now,)).fetchall()]
+            events = [dict(r) for r in db.execute("SELECT * FROM saas_webhooks WHERE ambiente=? AND status IN ('pendente','processando') AND proxima_tentativa<=? ORDER BY criado_em LIMIT 10",(environment(),now)).fetchall()]
             for event in events:
                 db.execute("UPDATE saas_webhooks SET status='processando',tentativas=tentativas+1,proxima_tentativa=? WHERE id=?",(now+900,event['id']))
         for event in events:
@@ -325,7 +433,7 @@ def instalar(app,c):
         # Conferência leve no backend: recupera eventos perdidos enquanto o serviço
         # esteve desligado. Nunca usa loops no navegador ou tarefas só em memória.
         with banco() as db:
-            stale = db.execute("SELECT id FROM saas_contratos WHERE ambiente='sandbox' AND checkout_id IS NOT NULL AND atualizado_em<? AND status NOT IN ('cancelada','expirada') ORDER BY atualizado_em LIMIT 5",(now-3600,)).fetchall()
+            stale = db.execute("SELECT id FROM saas_contratos WHERE ambiente=? AND checkout_id IS NOT NULL AND atualizado_em<? AND status NOT IN ('cancelada','expirada') ORDER BY atualizado_em LIMIT 5",(environment(),now-3600)).fetchall()
         for row in stale:
             try: sync_contract(row['id'])
             except Exception:
@@ -333,8 +441,8 @@ def instalar(app,c):
 
     @app.post('/api/saas/webhook')
     async def webhook(request:Request,background:BackgroundTasks):
-        secret = os.environ.get('ASAAS_WEBHOOK_TOKEN','')
-        if not enabled() or len(secret)<32 or secret == os.environ.get('ASAAS_API_KEY'):
+        secret = webhook_secret()
+        if not enabled() or len(secret)<32 or secret == api_key():
             raise HTTPException(503,'Webhook indisponível.')
         if not hmac.compare_digest(secret,request.headers.get('asaas-access-token','')):
             raise HTTPException(401,'Webhook não autorizado.')
@@ -352,7 +460,7 @@ def instalar(app,c):
             if ref is not None and (not isinstance(ref,str) or not re.fullmatch(r'havo:[a-f0-9]{48}',ref)): ref = None
         except (ValueError,KeyError,TypeError): raise HTTPException(422,'Evento inválido.') from None
         with banco() as db:
-            db.execute("INSERT INTO saas_webhooks(id,ambiente,tipo,recurso_id,referencia,status,tentativas,proxima_tentativa,criado_em) VALUES(?,?,?,?,?,'pendente',0,?,?) ON CONFLICT(id) DO NOTHING",('sandbox:'+eid,'sandbox',kind,rid,ref,int(time.time()),int(time.time())))
+            db.execute("INSERT INTO saas_webhooks(id,ambiente,tipo,recurso_id,referencia,status,tentativas,proxima_tentativa,criado_em) VALUES(?,?,?,?,?,'pendente',0,?,?) ON CONFLICT(id) DO NOTHING",(environment()+':'+eid,environment(),kind,rid,ref,int(time.time()),int(time.time())))
         background.add_task(tick)
         return {'recebido':True}
 
@@ -361,7 +469,7 @@ def instalar(app,c):
         with banco() as db:
             user = owner(request,db,True)
             c['limitar'](request,'asaas-sync',12,3600)
-            rows = db.execute("SELECT id FROM saas_contratos WHERE loja_id=? AND ambiente='sandbox' ORDER BY criado_em DESC LIMIT 10",(user['loja_id'],)).fetchall()
+            rows = db.execute("SELECT id FROM saas_contratos WHERE loja_id=? AND ambiente=? ORDER BY criado_em DESC LIMIT 10",(user['loja_id'],environment())).fetchall()
         tick()
         for row in rows: sync_contract(row['id'])
         return {'status':'sincronizado'}
@@ -370,13 +478,17 @@ def instalar(app,c):
     def cancel(cid:str,request:Request):
         with banco() as db:
             user = owner(request,db,True)
-            row = db.execute('SELECT * FROM saas_contratos WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],'sandbox')).fetchone()
+            row = db.execute('SELECT * FROM saas_contratos WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchone()
             if not row: raise HTTPException(404,'Contrato não encontrado.')
             if row['status'] == 'cancelada': return {'status':'cancelada'}
             row = dict(row)
         if row['assinatura_id']:
             api('PUT','/subscriptions/'+ident(row['assinatura_id']),{'status':'INACTIVE'})
             sync_contract(cid)
+            with banco() as db:
+                verified = db.execute('SELECT status FROM saas_contratos WHERE id=?',(cid,)).fetchone()
+                if not verified or verified['status'] != 'cancelada':
+                    raise HTTPException(502,'O Asaas ainda não confirmou o cancelamento. Sincronize antes de repetir.')
         elif row['checkout_id']:
             api('POST','/checkouts/'+ident(row['checkout_id'])+'/cancel')
         else: raise HTTPException(409,'Tentativa sem confirmação; confira os logs do Asaas antes de cancelar.')
@@ -397,7 +509,7 @@ def instalar(app,c):
         # nos logs privados do Asaas. Nunca inferir rejeição a partir de timeout.
         with banco() as db:
             user = c['administrador'](request,db,True)
-            if not enabled(): raise HTTPException(503,'Sandbox indisponível.')
+            if not enabled() or environment() != 'sandbox': raise HTTPException(503,'Exceção disponível somente no Sandbox.')
             lock(db)
             row = db.execute("SELECT * FROM saas_contratos WHERE id=? AND ambiente='sandbox'",(cid,)).fetchone()
             if not row: raise HTTPException(404,'Tentativa não encontrada.')
@@ -413,10 +525,11 @@ def instalar(app,c):
     def admin_report(request:Request):
         with banco() as db:
             c['administrador'](request,db)
-            rows = db.execute("SELECT s.*,u.email,l.slug FROM saas_contratos s JOIN lojas l ON l.id=s.loja_id JOIN usuarios u ON u.loja_id=s.loja_id WHERE s.ambiente='sandbox' ORDER BY s.criado_em DESC LIMIT 200").fetchall()
-            pending = db.execute("SELECT COUNT(*) AS n FROM saas_webhooks WHERE status!='processado'").fetchone()['n']
-        return {'ambiente':'sandbox','eventos_pendentes':pending,'contratos':[contract_view(r)|{'email':r['email'],'slug':r['slug']} for r in rows],
-                'receita_real_centavos':0,'observacao':'Somente simulação. Pagamentos Sandbox não são receita nem liberam acesso real.'}
+            rows = db.execute("SELECT s.*,u.email,l.slug FROM saas_contratos s JOIN lojas l ON l.id=s.loja_id JOIN usuarios u ON u.id=s.usuario_id AND u.loja_id=s.loja_id WHERE s.ambiente=? ORDER BY s.criado_em DESC LIMIT 200",(environment() or 'sandbox',)).fetchall()
+            pending = db.execute("SELECT COUNT(*) AS n FROM saas_webhooks WHERE ambiente=? AND status!='processado'",(environment() or 'sandbox',)).fetchone()['n']
+            totals = db.execute("SELECT COALESCE(SUM(valor_centavos),0) AS total FROM saas_cobrancas WHERE ambiente=? AND status IN ('RECEIVED','CONFIRMED')",('production',)).fetchone()['total']
+        return {'ambiente':environment() or 'sandbox','eventos_pendentes':pending,'contratos':[contract_view(r)|{'email':r['email'],'slug':r['slug']} for r in rows],
+                'receita_real_centavos':totals,'observacao':'Sandbox não libera acesso real. Receita real considera somente pagamentos confirmados de produção; não é MRR.'}
 
     async def worker():
         while True:

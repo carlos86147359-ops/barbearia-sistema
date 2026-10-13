@@ -30,6 +30,7 @@ def ler(path,checksum=None):
     allowed += [s-set(MONTHLY_TABLES) for s in allowed]
     allowed += [s-set(PUSH_TABLES) for s in allowed]
     allowed += [s-set(PROMO_TABLES) for s in allowed]
+    allowed += [s-{'saas_condicoes'} for s in allowed]
     allowed += [s-set(SAAS_TABLES) for s in allowed]
     if data.get('formato')!='barbersaas-backup' or data.get('versao')!=1 or keys not in allowed: raise ValueError('Formato de cópia não reconhecido.')
     tables=data['tabelas']
@@ -108,11 +109,11 @@ def ler(path,checksum=None):
         if (r['loja_id'],r['usuario_id']) not in actors or (r['promocao_id'] and (r['loja_id'],r['promocao_id']) not in promos):raise ValueError('Evento promocional incompatível.')
     contracts={r['id']:r for r in tables['saas_contratos']}
     for row in contracts.values():
-        if row['loja_id'] not in shops or (row['loja_id'],row['usuario_id']) not in actors or row['ambiente']!='sandbox':raise ValueError('Contrato SaaS incompatível.')
-    for table in ('saas_cobrancas','saas_auditoria'):
+        if row['loja_id'] not in shops or (row['loja_id'],row['usuario_id']) not in actors or row['ambiente'] not in ('sandbox','production'):raise ValueError('Contrato SaaS incompatível.')
+    for table in ('saas_cobrancas','saas_auditoria','saas_condicoes'):
         for row in tables[table]:
-            contract=contracts.get(row['contrato_id'])
-            if not contract or contract['loja_id']!=row['loja_id']:raise ValueError('Vínculo SaaS incompatível.')
+            contract=contracts.get(row['id'] if table=='saas_condicoes' else row['contrato_id'])
+            if not contract or contract['loja_id']!=row['loja_id'] or ('ambiente' in row and contract['ambiente']!=row['ambiente']):raise ValueError('Vínculo SaaS incompatível.')
     return tables
 
 def restaurar(tables,sqlite_path=None,postgres=False):
