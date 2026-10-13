@@ -288,6 +288,12 @@ def instalar(app,c):
             terms = db.execute('SELECT * FROM saas_condicoes WHERE id=?',(row['id'],)).fetchone()
             if not terms or due < terms['primeiro_vencimento'] or (terms['ultimo_vencimento'] and due > terms['ultimo_vencimento']):
                 raise ValueError('Cobrança fora do período contratado.')
+            anchor = date.fromisoformat(terms['primeiro_vencimento'])
+            due_day = date.fromisoformat(due)
+            cycle = (due_day.year-anchor.year)*12 + due_day.month-anchor.month
+            if due != add_months(terms['primeiro_vencimento'],cycle):
+                raise ValueError('Vencimento fora do calendário contratado.')
+            end = add_months(terms['primeiro_vencimento'],cycle+1)
         db.execute('INSERT INTO saas_cobrancas(id,loja_id,contrato_id,ambiente,provedor_id,valor_centavos,status,vencimento,pago_em,periodo_fim,fatura_url,atualizado_em) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ambiente,provedor_id) DO UPDATE SET status=excluded.status,pago_em=excluded.pago_em,periodo_fim=excluded.periodo_fim,fatura_url=excluded.fatura_url,atualizado_em=excluded.atualizado_em',
                    (row['ambiente']+':'+pid,row['loja_id'],row['id'],row['ambiente'],pid,value,status,due,paid,end,safe_invoice(payment.get('invoiceUrl')),int(time.time())))
 

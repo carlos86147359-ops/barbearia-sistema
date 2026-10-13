@@ -109,6 +109,21 @@ with tempfile.TemporaryDirectory() as tmp:
     payments['pay_2'].update(deleted=True,omit=True)
     assert event('pay_2',8,'PAYMENT_DELETED').status_code==200
     assert a.get('/api/assinatura').json()['ativa'] is False
+    # Calendário ancorado no dia original: fevereiro não desloca março.
+    assert b.post('/api/saas/checkout',json=consent,headers=headers[1]).status_code==200
+    third=b.get('/api/saas/assinatura').json()['contratos'][0]
+    with appmod.banco() as db:
+        db.execute('UPDATE saas_condicoes SET primeiro_vencimento=?,ultimo_vencimento=? WHERE id=?',('2028-01-31','2028-03-31',third['id']))
+    subscriptions['sub_3']['endDate']='2028-03-31'
+    payments['pay_3'].update(dueDate='2028-02-29',status='CONFIRMED',paymentDate='2028-02-29')
+    assert event('pay_3',9).status_code==200
+    assert b.get('/api/saas/assinatura').json()['contratos'][0]['pago_ate']=='2028-03-31'
+    payments['pay_fourth']={**payments['pay_3'],'id':'pay_fourth','dueDate':'2028-04-30'}
+    assert event('pay_fourth',10).status_code==200
+    with appmod.banco() as db:
+        assert db.execute('SELECT status FROM saas_webhooks WHERE id=?',('production:evt_10',)).fetchone()['status']=='pendente'
+        assert not db.execute('SELECT id FROM saas_cobrancas WHERE provedor_id=?',('pay_fourth',)).fetchone()
+    payments.pop('pay_fourth')
     # Simula terceiro ciclo e confirma ausência de quarto ciclo promocional.
     assert billing.add_months('2028-01-31',2)=='2028-03-31'
     assert billing.add_months('2028-01-31',1)=='2028-02-29'
@@ -134,7 +149,7 @@ with tempfile.TemporaryDirectory() as tmp:
     backup=Path(tmp)/'backup.json';backup.write_text(json.dumps(document),encoding='utf-8')
     restored=restaurar_backup.ler(backup,None)
     counts=restaurar_backup.restaurar(restored,Path(tmp)/'restore.db')
-    assert counts['saas_condicoes']==2
+    assert counts['saas_condicoes']==3
     document['tabelas'].pop('saas_condicoes')
     backup.write_text(json.dumps(document),encoding='utf-8')
     assert restaurar_backup.ler(backup,None)['saas_condicoes']==[]
