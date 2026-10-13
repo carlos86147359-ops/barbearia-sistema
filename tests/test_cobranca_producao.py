@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==503
     os.environ['ASAAS_PRODUCTION_ENABLED']='true'
     assert a.post('/api/saas/checkout',json={},headers=headers[0]).status_code==422
-    calls=[];subscriptions={};payments={};checkouts=[]
+    calls=[];subscriptions={};payments={};checkouts=[];fail_delete=False
     def fake(method,path,body=None):
         calls.append((method,path,body))
         if method=='POST' and path=='/checkouts':
@@ -44,6 +44,9 @@ with tempfile.TemporaryDirectory() as tmp:
         if path.startswith('/payments?'):
             return {'data':[]} # Webhook recupera cobrança canônica.
         if path.startswith('/payments/'):
+            if method=='DELETE':
+                if fail_delete: raise HTTPException(502,'falha simulada')
+                payments[path.split('/')[2]]['deleted']=True;return {'deleted':True}
             return {'deleted':True} if payments[path.split('/')[2]].get('deleted') else dict(payments[path.split('/')[2]])
         if path.startswith('/subscriptions/'):
             sid=path.split('/')[2]
@@ -92,10 +95,19 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_1',5,'PAYMENT_REFUNDED').status_code==200
     assert a.get('/api/assinatura').json()['vencimento']==due
     with appmod.banco() as db: db.execute('DELETE FROM assinaturas WHERE loja_id=?',(shop,))
+    # Cancelar elimina cobranças futuras já emitidas, sem apagar histórico.
+    payments['pay_future']={**payments['pay_1'],'id':'pay_future','dueDate':billing.add_months(start,1),'status':'PENDING'}
+    assert event('pay_future',11,'PAYMENT_CREATED').status_code==200
     # Cancelar preserva histórico e não reinicia a promoção.
     os.environ['ASAAS_PRODUCTION_ENABLED']='true'
+    fail_delete=True
+    assert a.post('/api/saas/contratos/'+cid+'/cancelar',headers=headers[0]).status_code==502
+    assert a.get('/api/saas/assinatura').json()['contratos'][0]['status']=='cancelando'
+    assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==409
+    fail_delete=False
     assert a.post('/api/saas/contratos/'+cid+'/cancelar',headers=headers[0]).status_code==200
     assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==200
+    assert payments['pay_future']['deleted'] is True
     assert checkouts[1]['items'][0]['value']==90 and 'endDate' not in checkouts[1]['subscription']
     second=next(c for c in a.get('/api/saas/assinatura').json()['contratos'] if c['id']!=cid)
     assert second['condicoes']['oferta']=='mensal_90_v1'
@@ -110,6 +122,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_2',8,'PAYMENT_DELETED').status_code==200
     assert a.get('/api/assinatura').json()['ativa'] is False
     # Calendário ancorado no dia original: fevereiro não desloca março.
+    with appmod.banco() as db:
+        bshop=db.execute('SELECT loja_id FROM usuarios WHERE email=?',('prod1@example.test',)).fetchone()['loja_id']
+        db.execute('INSERT INTO assinaturas(loja_id,vencimento) VALUES(?,?)',(bshop,(datetime.now(appmod.BRASIL)+timedelta(days=30)).isoformat()))
+    assert b.post('/api/saas/checkout',json=consent,headers=headers[1]).status_code==409
+    assert b.get('/api/saas/assinatura').json()['contratacao_disponivel'] is False
+    with appmod.banco() as db: db.execute('DELETE FROM assinaturas WHERE loja_id=?',(bshop,))
     assert b.post('/api/saas/checkout',json=consent,headers=headers[1]).status_code==200
     third=b.get('/api/saas/assinatura').json()['contratos'][0]
     with appmod.banco() as db:

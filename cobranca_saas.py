@@ -195,10 +195,14 @@ def instalar(app,c):
             if environment() == 'production' and db.execute('SELECT 1 FROM cortesias WHERE loja_id=?',(user['loja_id'],)).fetchone(): return {'disponivel':False}
             rows = db.execute('SELECT * FROM saas_contratos WHERE loja_id=? AND ambiente=? ORDER BY criado_em DESC,id DESC',
                               (user['loja_id'],environment())).fetchall()
+            access = c['assinatura'](db,user['loja_id'])
+            manual = [dict(p) for p in db.execute('SELECT valor_centavos,confirmado_em,vencimento FROM pagamentos WHERE loja_id=? ORDER BY confirmado_em DESC LIMIT 100',(user['loja_id'],)).fetchall()]
+            can_contract = not access.get('vencimento') or datetime.fromisoformat(access['vencimento']) <= datetime.now(c['BRASIL'])
             payments = db.execute('SELECT valor_centavos,status,vencimento,pago_em,fatura_url FROM saas_cobrancas WHERE loja_id=? AND ambiente=? ORDER BY vencimento DESC,id DESC LIMIT 100',
                                   (user['loja_id'],environment())).fetchall()
         return {'disponivel':True,'ambiente':environment(),'oferta_limitada':limited_offer_enabled(),'valor_centavos':6000 if limited_offer_enabled() and not used_offer(db=None, shop=user['loja_id']) else 9000,
                 'vendas_habilitadas':environment() == 'sandbox' or production_sales_enabled(),
+                'acesso_atual':access,'pagamentos_manuais':manual,'contratacao_disponivel':environment() == 'sandbox' or can_contract,
                 'contratos':[contract_view(r) for r in rows], 'pagamentos':[dict(r) for r in payments]}
 
     @app.post('/api/saas/checkout')
@@ -233,8 +237,10 @@ def instalar(app,c):
             price = 6000 if promo else 9000
             last_due = add_months(first_due,2) if promo else None
             if environment() == 'production':
-                paid_until = production_access(db,user['loja_id'],first_due)
-                if paid_until:
+                pending = db.execute("SELECT 1 FROM saas_cobrancas WHERE loja_id=? AND ambiente=? AND status IN ('PENDING','OVERDUE','CREDIT_CARD_CAPTURE_REFUSED','AWAITING_RISK_ANALYSIS','AUTHORIZED') LIMIT 1",(user['loja_id'],'production')).fetchone()
+                if pending: raise HTTPException(409,'Existe mensalidade pendente. Regularize a fatura antes de criar nova assinatura.')
+                access = c['assinatura'](db,user['loja_id'])
+                if access.get('vencimento') and datetime.fromisoformat(access['vencimento']) > datetime.now(c['BRASIL']):
                     raise HTTPException(409,'Seu período pago ainda está vigente. Aguarde o fim do período para nova contratação.')
             cid = secrets.token_hex(24)
             db.execute('INSERT INTO saas_contratos(id,loja_id,ambiente,usuario_id,valor_centavos,status,criado_em,atualizado_em) VALUES(?,?,?,?,?,?,?,?)',
@@ -362,6 +368,7 @@ def instalar(app,c):
         ended = terms and terms['ultimo_vencimento'] and datetime.now(c['BRASIL']).date().isoformat() > terms['ultimo_vencimento']
         canceled = subscription.get('deleted') or subscription.get('status') == 'INACTIVE' or ended
         status = 'cancelada' if canceled else 'atrasada' if late else 'ativa' if paid else 'aguardando_pagamento'
+        if row['ambiente'] == 'production' and current['status'] == 'cancelando': status = 'cancelando'
         next_due = subscription.get('nextDueDate')
         if next_due: next_due = date.fromisoformat(next_due[:10]).isoformat()
         db.execute('UPDATE saas_contratos SET assinatura_id=?,cliente_id=?,status=?,proximo_vencimento=?,pago_ate=?,erro=?,atualizado_em=? WHERE id=?',
@@ -480,14 +487,35 @@ def instalar(app,c):
             user = owner(request,db,True)
             row = db.execute('SELECT * FROM saas_contratos WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchone()
             if not row: raise HTTPException(404,'Contrato não encontrado.')
-            if row['status'] == 'cancelada': return {'status':'cancelada'}
+            if row['status'] == 'cancelada' and row['ambiente'] == 'sandbox': return {'status':'cancelada'}
             row = dict(row)
+            if row['ambiente'] == 'production' and row['assinatura_id'] and row['status'] != 'cancelada':
+                db.execute("UPDATE saas_contratos SET status='cancelando',atualizado_em=? WHERE id=?",(int(time.time()),cid))
+                audit(db,row,user['id'],'cancelamento_solicitado')
         if row['assinatura_id']:
             api('PUT','/subscriptions/'+ident(row['assinatura_id']),{'status':'INACTIVE'})
+            if row['ambiente'] == 'production':
+                # INACTIVE não cancela cobranças já emitidas pelo Asaas. Retirar
+                # somente pendências FUTURAS para não debitar após cancelamento.
+                today = datetime.now(c['BRASIL']).date().isoformat()
+                for offset in range(0,1000,100):
+                    page = api('GET','/subscriptions/'+ident(row['assinatura_id'])+'/payments?'+urllib.parse.urlencode({'limit':100,'offset':offset}))
+                    for p in page.get('data',[]):
+                        if p.get('subscription') != row['assinatura_id'] or p.get('customer') != row['cliente_id']:
+                            raise HTTPException(502,'Vínculo da cobrança exige conferência.')
+                        if p.get('status') in ('PENDING','OVERDUE','CREDIT_CARD_CAPTURE_REFUSED') and p.get('dueDate','') > today and not p.get('deleted'):
+                            pid = ident(p['id'])
+                            api('DELETE','/payments/'+pid)
+                            removed = api('GET','/payments/'+pid)
+                            if not removed.get('deleted'):
+                                raise HTTPException(502,'Cancelamento de mensalidade futura ainda não confirmado.')
+                            sync_contract(cid,{**p,'deleted':True,'status':'DELETED'})
+                    if not page.get('hasMore'): break
             sync_contract(cid)
             with banco() as db:
                 verified = db.execute('SELECT status FROM saas_contratos WHERE id=?',(cid,)).fetchone()
-                if not verified or verified['status'] != 'cancelada':
+                confirmed_cancel = api('GET','/subscriptions/'+ident(row['assinatura_id'])) if row['ambiente'] == 'production' else None
+                if not verified or (row['ambiente'] == 'production' and not (confirmed_cancel.get('deleted') or confirmed_cancel.get('status') == 'INACTIVE')) or (row['ambiente'] == 'sandbox' and verified['status'] != 'cancelada'):
                     raise HTTPException(502,'O Asaas ainda não confirmou o cancelamento. Sincronize antes de repetir.')
         elif row['checkout_id']:
             api('POST','/checkouts/'+ident(row['checkout_id'])+'/cancel')
