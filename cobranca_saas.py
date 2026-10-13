@@ -302,7 +302,8 @@ def instalar(app,c):
         # Nenhuma consulta antiga sobrescreve um estorno ou cancelamento novo.
         with banco() as db:
             lock(db)
-            sync_locked(db,cid,payment_hint)
+            invalid = sync_locked(db,cid,payment_hint)
+        if invalid: raise ValueError('Há cobrança fora das condições contratadas; conferência necessária.')
 
     def sync_locked(db,cid,payment_hint=None):
         found = db.execute('SELECT * FROM saas_contratos WHERE id=? AND ambiente=?',(cid,environment())).fetchone()
@@ -352,7 +353,10 @@ def instalar(app,c):
             payments = [p for p in payments if p.get('id') != payment_hint.get('id')] + [payment_hint]
         current = db.execute('SELECT * FROM saas_contratos WHERE id=?',(cid,)).fetchone()
         if current['assinatura_id'] and current['assinatura_id'] != sid: raise ValueError('Assinatura alterada.')
-        for payment in payments: store_payment(db,row,payment)
+        invalid = False
+        for payment in payments:
+            try: store_payment(db,row,payment)
+            except ValueError: invalid = True
         paid = db.execute("SELECT MAX(periodo_fim) AS fim FROM saas_cobrancas WHERE contrato_id=? AND status IN ('RECEIVED','CONFIRMED','RECEIVED_IN_CASH')",(cid,)).fetchone()['fim']
         late = db.execute("SELECT COUNT(*) AS n FROM saas_cobrancas WHERE contrato_id=? AND status IN ('OVERDUE','CREDIT_CARD_CAPTURE_REFUSED')",(cid,)).fetchone()['n']
         ended = terms and terms['ultimo_vencimento'] and datetime.now(c['BRASIL']).date().isoformat() > terms['ultimo_vencimento']
@@ -360,8 +364,10 @@ def instalar(app,c):
         status = 'cancelada' if canceled else 'atrasada' if late else 'ativa' if paid else 'aguardando_pagamento'
         next_due = subscription.get('nextDueDate')
         if next_due: next_due = date.fromisoformat(next_due[:10]).isoformat()
-        db.execute('UPDATE saas_contratos SET assinatura_id=?,cliente_id=?,status=?,proximo_vencimento=?,pago_ate=?,erro=NULL,atualizado_em=? WHERE id=?',
-                   (sid,row['cliente_id'],status,None if canceled else next_due,paid,int(time.time()),cid))
+        db.execute('UPDATE saas_contratos SET assinatura_id=?,cliente_id=?,status=?,proximo_vencimento=?,pago_ate=?,erro=?,atualizado_em=? WHERE id=?',
+                   (sid,row['cliente_id'],status,None if canceled else next_due,paid,'Cobrança fora das condições; conferência necessária.' if invalid else None,int(time.time()),cid))
+        # Confirmações/estornos válidos são preservados mesmo se outra cobrança exigir revisão.
+        return invalid
         # Acesso real é calculado pelos recebimentos de produção, sem alterar Pix/cortesia.
 
     def process_event(event):
