@@ -195,10 +195,14 @@ def instalar(app,c):
             if environment() == 'production' and db.execute('SELECT 1 FROM cortesias WHERE loja_id=?',(user['loja_id'],)).fetchone(): return {'disponivel':False}
             rows = db.execute('SELECT * FROM saas_contratos WHERE loja_id=? AND ambiente=? ORDER BY criado_em DESC,id DESC',
                               (user['loja_id'],environment())).fetchall()
+            access = c['assinatura'](db,user['loja_id'])
+            manual = [dict(p) for p in db.execute('SELECT valor_centavos,confirmado_em,vencimento FROM pagamentos WHERE loja_id=? ORDER BY confirmado_em DESC LIMIT 100',(user['loja_id'],)).fetchall()]
+            can_contract = not access.get('vencimento') or datetime.fromisoformat(access['vencimento']) <= datetime.now(c['BRASIL'])
             payments = db.execute('SELECT valor_centavos,status,vencimento,pago_em,fatura_url FROM saas_cobrancas WHERE loja_id=? AND ambiente=? ORDER BY vencimento DESC,id DESC LIMIT 100',
                                   (user['loja_id'],environment())).fetchall()
         return {'disponivel':True,'ambiente':environment(),'oferta_limitada':limited_offer_enabled(),'valor_centavos':6000 if limited_offer_enabled() and not used_offer(db=None, shop=user['loja_id']) else 9000,
                 'vendas_habilitadas':environment() == 'sandbox' or production_sales_enabled(),
+                'acesso_atual':access,'pagamentos_manuais':manual,'contratacao_disponivel':environment() == 'sandbox' or can_contract,
                 'contratos':[contract_view(r) for r in rows], 'pagamentos':[dict(r) for r in payments]}
 
     @app.post('/api/saas/checkout')
@@ -233,8 +237,8 @@ def instalar(app,c):
             price = 6000 if promo else 9000
             last_due = add_months(first_due,2) if promo else None
             if environment() == 'production':
-                paid_until = production_access(db,user['loja_id'],first_due)
-                if paid_until:
+                access = c['assinatura'](db,user['loja_id'])
+                if access.get('vencimento') and datetime.fromisoformat(access['vencimento']) > datetime.now(c['BRASIL']):
                     raise HTTPException(409,'Seu período pago ainda está vigente. Aguarde o fim do período para nova contratação.')
             cid = secrets.token_hex(24)
             db.execute('INSERT INTO saas_contratos(id,loja_id,ambiente,usuario_id,valor_centavos,status,criado_em,atualizado_em) VALUES(?,?,?,?,?,?,?,?)',

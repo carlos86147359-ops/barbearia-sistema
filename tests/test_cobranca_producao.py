@@ -110,6 +110,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_2',8,'PAYMENT_DELETED').status_code==200
     assert a.get('/api/assinatura').json()['ativa'] is False
     # Calendário ancorado no dia original: fevereiro não desloca março.
+    with appmod.banco() as db:
+        bshop=db.execute('SELECT loja_id FROM usuarios WHERE email=?',('prod1@example.test',)).fetchone()['loja_id']
+        db.execute('INSERT INTO assinaturas(loja_id,vencimento) VALUES(?,?)',(bshop,(datetime.now(appmod.BRASIL)+timedelta(days=30)).isoformat()))
+    assert b.post('/api/saas/checkout',json=consent,headers=headers[1]).status_code==409
+    assert b.get('/api/saas/assinatura').json()['contratacao_disponivel'] is False
+    with appmod.banco() as db: db.execute('DELETE FROM assinaturas WHERE loja_id=?',(bshop,))
     assert b.post('/api/saas/checkout',json=consent,headers=headers[1]).status_code==200
     third=b.get('/api/saas/assinatura').json()['contratos'][0]
     with appmod.banco() as db:
