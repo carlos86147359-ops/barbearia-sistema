@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),vm=require('node:vm');
+const html=fs.readFileSync('index.html','utf8'),start=html.indexOf('async function api('),end=html.indexOf('function inicio()',start);
+const scope={csrf:'test-csrf',setTimeout:f=>f(),fetch:null};
+vm.createContext(scope);vm.runInContext(html.slice(start,end),scope);
+const response=(status,data={})=>({ok:status>=200&&status<300,status,json:async()=>data});
+(async()=>{
+ let calls=0;scope.fetch=async()=>{calls++;return calls===1?response(502):response(200,{ok:true});};
+ assert.equal((await scope.api('/api/assinatura')).ok,true);assert.equal(calls,2);
+ calls=0;scope.fetch=async()=>{calls++;throw new Error('network');};
+ await assert.rejects(scope.api('/api/saas/checkout',{method:'POST'}),/network/);assert.equal(calls,1);
+ calls=0;scope.fetch=async()=>{calls++;return response(502);};
+ await assert.rejects(scope.api('/api/saas/checkout',{method:'POST'}),e=>e.status===502);assert.equal(calls,1);
+ calls=0;scope.fetch=async()=>{calls++;return response(401,{detail:'Entre na conta'});};
+ await assert.rejects(scope.api('/api/sessao'),e=>e.status===401);assert.equal(calls,1);
+ calls=0;scope.fetch=async()=>{calls++;return response(503);};
+ await assert.rejects(scope.api('/api/configuracao'),e=>e.status===503);assert.equal(calls,3);
+ calls=0;scope.fetch=async()=>{calls++;if(calls===1)throw new Error('network');return response(200,{ok:true});};
+ assert.equal((await scope.api('/api/agendamentos')).ok,true);assert.equal(calls,2);
+ console.log('OK: recuperar leituras transitorias sem repetir cobrancas/escritas ou autenticação.');
+})().catch(e=>{console.error(e);process.exit(1)});

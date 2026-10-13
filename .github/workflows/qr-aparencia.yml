@@ -31,6 +31,8 @@ jobs:
         run: PYTHONPATH=. python tests/test_cobranca_producao.py
       - name: Validar promocoes e recebimentos em SQLite
         run: PYTHONPATH=. python tests/test_promocoes.py
+      - name: Validar recuperacao de leitura sem repetir cobrancas
+        run: node tests/test_api_recovery.cjs
       - name: Instalar navegador de teste
         run: |
           npm install --no-save playwright
