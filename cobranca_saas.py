@@ -486,7 +486,7 @@ def instalar(app,c):
             user = owner(request,db,True)
             row = db.execute('SELECT * FROM saas_contratos WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchone()
             if not row: raise HTTPException(404,'Contrato não encontrado.')
-            if row['status'] == 'cancelada': return {'status':'cancelada'}
+            if row['status'] == 'cancelada' and row['ambiente'] == 'sandbox': return {'status':'cancelada'}
             row = dict(row)
         if row['assinatura_id']:
             api('PUT','/subscriptions/'+ident(row['assinatura_id']),{'status':'INACTIVE'})
