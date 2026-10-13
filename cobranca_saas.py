@@ -182,7 +182,7 @@ def instalar(app,c):
 
     def used_offer(db=None, shop=None):
         def check(conn):
-            return bool(conn.execute("SELECT 1 FROM saas_condicoes t JOIN saas_contratos s ON s.id=t.id WHERE t.loja_id=? AND t.ambiente=? AND t.oferta=? AND (s.checkout_id IS NOT NULL OR s.status IN ('criando','incerta')) LIMIT 1",
+            return bool(conn.execute("SELECT 1 FROM saas_condicoes t JOIN saas_contratos s ON s.id=t.id WHERE t.loja_id=? AND t.ambiente=? AND t.oferta=? AND (s.assinatura_id IS NOT NULL OR s.status IN ('criando','incerta','checkout')) LIMIT 1",
                                      (shop, environment(), 'tres_meses_60_v1')).fetchone())
         if db is not None: return check(db)
         with banco() as conn: return check(conn)
