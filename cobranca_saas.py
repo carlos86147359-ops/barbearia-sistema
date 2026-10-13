@@ -237,6 +237,8 @@ def instalar(app,c):
             price = 6000 if promo else 9000
             last_due = add_months(first_due,2) if promo else None
             if environment() == 'production':
+                pending = db.execute("SELECT 1 FROM saas_cobrancas WHERE loja_id=? AND ambiente=? AND status IN ('PENDING','OVERDUE','CREDIT_CARD_CAPTURE_REFUSED','AWAITING_RISK_ANALYSIS','AUTHORIZED') LIMIT 1",(user['loja_id'],'production')).fetchone()
+                if pending: raise HTTPException(409,'Existe mensalidade pendente. Regularize a fatura antes de criar nova assinatura.')
                 access = c['assinatura'](db,user['loja_id'])
                 if access.get('vencimento') and datetime.fromisoformat(access['vencimento']) > datetime.now(c['BRASIL']):
                     raise HTTPException(409,'Seu período pago ainda está vigente. Aguarde o fim do período para nova contratação.')
@@ -488,6 +490,23 @@ def instalar(app,c):
             row = dict(row)
         if row['assinatura_id']:
             api('PUT','/subscriptions/'+ident(row['assinatura_id']),{'status':'INACTIVE'})
+            if row['ambiente'] == 'production':
+                # INACTIVE não cancela cobranças já emitidas pelo Asaas. Retirar
+                # somente pendências FUTURAS para não debitar após cancelamento.
+                today = datetime.now(c['BRASIL']).date().isoformat()
+                for offset in range(0,1000,100):
+                    page = api('GET','/subscriptions/'+ident(row['assinatura_id'])+'/payments?'+urllib.parse.urlencode({'limit':100,'offset':offset}))
+                    for p in page.get('data',[]):
+                        if p.get('subscription') != row['assinatura_id'] or p.get('customer') != row['cliente_id']:
+                            raise HTTPException(502,'Vínculo da cobrança exige conferência.')
+                        if p.get('status') in ('PENDING','OVERDUE','CREDIT_CARD_CAPTURE_REFUSED') and p.get('dueDate','') > today and not p.get('deleted'):
+                            pid = ident(p['id'])
+                            api('DELETE','/payments/'+pid)
+                            removed = api('GET','/payments/'+pid)
+                            if not removed.get('deleted'):
+                                raise HTTPException(502,'Cancelamento de mensalidade futura ainda não confirmado.')
+                            sync_contract(cid,{**p,'deleted':True,'status':'DELETED'})
+                    if not page.get('hasMore'): break
             sync_contract(cid)
             with banco() as db:
                 verified = db.execute('SELECT status FROM saas_contratos WHERE id=?',(cid,)).fetchone()

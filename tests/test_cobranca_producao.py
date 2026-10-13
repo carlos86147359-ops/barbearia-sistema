@@ -44,6 +44,7 @@ with tempfile.TemporaryDirectory() as tmp:
         if path.startswith('/payments?'):
             return {'data':[]} # Webhook recupera cobrança canônica.
         if path.startswith('/payments/'):
+            if method=='DELETE': payments[path.split('/')[2]]['deleted']=True;return {'deleted':True}
             return {'deleted':True} if payments[path.split('/')[2]].get('deleted') else dict(payments[path.split('/')[2]])
         if path.startswith('/subscriptions/'):
             sid=path.split('/')[2]
@@ -92,10 +93,14 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_1',5,'PAYMENT_REFUNDED').status_code==200
     assert a.get('/api/assinatura').json()['vencimento']==due
     with appmod.banco() as db: db.execute('DELETE FROM assinaturas WHERE loja_id=?',(shop,))
+    # Cancelar elimina cobranças futuras já emitidas, sem apagar histórico.
+    payments['pay_future']={**payments['pay_1'],'id':'pay_future','dueDate':billing.add_months(start,1),'status':'PENDING'}
+    assert event('pay_future',11,'PAYMENT_CREATED').status_code==200
     # Cancelar preserva histórico e não reinicia a promoção.
     os.environ['ASAAS_PRODUCTION_ENABLED']='true'
     assert a.post('/api/saas/contratos/'+cid+'/cancelar',headers=headers[0]).status_code==200
     assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==200
+    assert payments['pay_future']['deleted'] is True
     assert checkouts[1]['items'][0]['value']==90 and 'endDate' not in checkouts[1]['subscription']
     second=next(c for c in a.get('/api/saas/assinatura').json()['contratos'] if c['id']!=cid)
     assert second['condicoes']['oferta']=='mensal_90_v1'

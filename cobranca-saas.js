@@ -35,7 +35,7 @@
   }));
   target.querySelector('[data-real-sync]').onclick=e=>buttonBusy(e.currentTarget,async()=>{await api('/api/saas/sincronizar',{method:'POST'});await load(target);mensagem('Situação atualizada.');});
   target.querySelector('[data-real-cancel]')?.addEventListener('click',e=>{const b=e.currentTarget;buttonBusy(b,async()=>{
-   if(!await AppShell.confirm('Cancelar assinatura?','A recorrência será interrompida. Pagamentos e histórico serão preservados. O período já pago continua disponível.','Cancelar assinatura',true))return;
+   if(!await AppShell.confirm('Cancelar assinatura?','A recorrência será interrompida. Pagamentos e histórico serão preservados. O período já pago continua disponível. Mensalidades vencidas continuam pendentes.','Cancelar assinatura',true))return;
    await api('/api/saas/contratos/'+encodeURIComponent(b.dataset.realCancel)+'/cancelar',{method:'POST'});await load(target);
   });});
  }
