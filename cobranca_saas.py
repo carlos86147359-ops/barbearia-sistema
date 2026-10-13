@@ -246,7 +246,7 @@ def instalar(app,c):
                 'items':[{'name':'Grupo Havo - Mensal TESTE' if environment() == 'sandbox' else 'Grupo Havo - Mensal',
                           'description':'Homologação Sandbox, sem cobrança real' if environment() == 'sandbox' else ('R$60 por mês por 3 ciclos. Depois exige nova contratação de R$90/mês.' if promo else 'R$90 por mês. Recorrência mensal até cancelamento.'),
                           'quantity':1,'value':price/100}],
-                'subscription':{'cycle':'MONTHLY','nextDueDate':first_due+' 00:00:00',**({'endDate':last_due+' 23:59:59'} if last_due else {})}})
+                'subscription':{'cycle':'MONTHLY','nextDueDate':datetime.now(c['BRASIL']).strftime('%Y-%m-%d %H:%M:%S'),**({'endDate':last_due+' 23:59:59'} if last_due else {})}})
             checkout_id = ident(result.get('id'))
         except CheckoutRejected:
             with banco() as db:

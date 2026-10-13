@@ -54,6 +54,8 @@ jobs:
           PYTHONPATH=. python tests/test_equipe.py
           PYTHONPATH=. python tests/test_pwa.py
           node tests/test_frontend.cjs
+      - name: Testar interface de cobranca e consentimento
+        run: node tests/test_cobranca_browser.cjs
       - name: Testar central de notificacoes e experiencia mobile
         run: node tests/test_notificacoes_browser.cjs
       - name: Testar enquadramento e fotos dos profissionais

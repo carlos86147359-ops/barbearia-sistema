@@ -97,7 +97,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.post('/api/saas/contratos/'+cid+'/cancelar',headers=headers[0]).status_code==200
     assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==200
     assert checkouts[1]['items'][0]['value']==90 and 'endDate' not in checkouts[1]['subscription']
-    second=a.get('/api/saas/assinatura').json()['contratos'][0]
+    second=next(c for c in a.get('/api/saas/assinatura').json()['contratos'] if c['id']!=cid)
     assert second['condicoes']['oferta']=='mensal_90_v1'
     assert event('pay_2',6).status_code==200
     payments['pay_2'].update(status='CONFIRMED',paymentDate=start)
