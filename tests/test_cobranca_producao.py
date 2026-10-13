@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==503
     os.environ['ASAAS_PRODUCTION_ENABLED']='true'
     assert a.post('/api/saas/checkout',json={},headers=headers[0]).status_code==422
-    calls=[];subscriptions={};payments={};checkouts=[]
+    calls=[];subscriptions={};payments={};checkouts=[];fail_delete=False
     def fake(method,path,body=None):
         calls.append((method,path,body))
         if method=='POST' and path=='/checkouts':
@@ -44,7 +44,9 @@ with tempfile.TemporaryDirectory() as tmp:
         if path.startswith('/payments?'):
             return {'data':[]} # Webhook recupera cobrança canônica.
         if path.startswith('/payments/'):
-            if method=='DELETE': payments[path.split('/')[2]]['deleted']=True;return {'deleted':True}
+            if method=='DELETE':
+                if fail_delete: raise HTTPException(502,'falha simulada')
+                payments[path.split('/')[2]]['deleted']=True;return {'deleted':True}
             return {'deleted':True} if payments[path.split('/')[2]].get('deleted') else dict(payments[path.split('/')[2]])
         if path.startswith('/subscriptions/'):
             sid=path.split('/')[2]
@@ -98,6 +100,11 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_future',11,'PAYMENT_CREATED').status_code==200
     # Cancelar preserva histórico e não reinicia a promoção.
     os.environ['ASAAS_PRODUCTION_ENABLED']='true'
+    fail_delete=True
+    assert a.post('/api/saas/contratos/'+cid+'/cancelar',headers=headers[0]).status_code==502
+    assert a.get('/api/saas/assinatura').json()['contratos'][0]['status']=='cancelando'
+    assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==409
+    fail_delete=False
     assert a.post('/api/saas/contratos/'+cid+'/cancelar',headers=headers[0]).status_code==200
     assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==200
     assert payments['pay_future']['deleted'] is True

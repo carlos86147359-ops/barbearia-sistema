@@ -2,7 +2,7 @@
 (()=>{
  'use strict';
  const original=renderAssinatura;
- const labels={criando:'Criando checkout',incerta:'Aguardando conferência',checkout:'Checkout disponível',aguardando_pagamento:'Aguardando pagamento',ativa:'Ativa',atrasada:'Pagamento pendente ou atrasado',cancelada:'Cancelada',expirada:'Checkout expirado'};
+ const labels={cancelando:'Cancelamento em processamento · tente novamente se houve falha',criando:'Criando checkout',incerta:'Aguardando conferência',checkout:'Checkout disponível',aguardando_pagamento:'Aguardando pagamento',ativa:'Ativa',atrasada:'Pagamento pendente ou atrasado',cancelada:'Cancelada',expirada:'Checkout expirado'};
  function buttonBusy(b,action){b.disabled=true;return action().catch(e=>mensagem(e.message,true)).finally(()=>{if(b.isConnected)b.disabled=false;});}
  renderAssinatura=function(){original();const host=document.getElementById('assinatura-area');const target=document.createElement('section');target.className='card';target.id='asaas-sandbox';host.append(target);load(target);};
  async function load(target){

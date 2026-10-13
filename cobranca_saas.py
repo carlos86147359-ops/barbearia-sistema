@@ -368,6 +368,7 @@ def instalar(app,c):
         ended = terms and terms['ultimo_vencimento'] and datetime.now(c['BRASIL']).date().isoformat() > terms['ultimo_vencimento']
         canceled = subscription.get('deleted') or subscription.get('status') == 'INACTIVE' or ended
         status = 'cancelada' if canceled else 'atrasada' if late else 'ativa' if paid else 'aguardando_pagamento'
+        if row['ambiente'] == 'production' and current['status'] == 'cancelando': status = 'cancelando'
         next_due = subscription.get('nextDueDate')
         if next_due: next_due = date.fromisoformat(next_due[:10]).isoformat()
         db.execute('UPDATE saas_contratos SET assinatura_id=?,cliente_id=?,status=?,proximo_vencimento=?,pago_ate=?,erro=?,atualizado_em=? WHERE id=?',
@@ -488,6 +489,9 @@ def instalar(app,c):
             if not row: raise HTTPException(404,'Contrato não encontrado.')
             if row['status'] == 'cancelada' and row['ambiente'] == 'sandbox': return {'status':'cancelada'}
             row = dict(row)
+            if row['ambiente'] == 'production' and row['assinatura_id'] and row['status'] != 'cancelada':
+                db.execute("UPDATE saas_contratos SET status='cancelando',atualizado_em=? WHERE id=?",(int(time.time()),cid))
+                audit(db,row,user['id'],'cancelamento_solicitado')
         if row['assinatura_id']:
             api('PUT','/subscriptions/'+ident(row['assinatura_id']),{'status':'INACTIVE'})
             if row['ambiente'] == 'production':
@@ -510,7 +514,8 @@ def instalar(app,c):
             sync_contract(cid)
             with banco() as db:
                 verified = db.execute('SELECT status FROM saas_contratos WHERE id=?',(cid,)).fetchone()
-                if not verified or verified['status'] != 'cancelada':
+                confirmed_cancel = api('GET','/subscriptions/'+ident(row['assinatura_id'])) if row['ambiente'] == 'production' else None
+                if not verified or (row['ambiente'] == 'production' and not (confirmed_cancel.get('deleted') or confirmed_cancel.get('status') == 'INACTIVE')) or (row['ambiente'] == 'sandbox' and verified['status'] != 'cancelada'):
                     raise HTTPException(502,'O Asaas ainda não confirmou o cancelamento. Sincronize antes de repetir.')
         elif row['checkout_id']:
             api('POST','/checkouts/'+ident(row['checkout_id'])+'/cancel')
