@@ -241,6 +241,11 @@ def assinatura(db,shop_id):
         return {'ativa':True,'status':'cortesia','vencimento':None,'valor':0,'cobranca_ativa':cobranca_ativa(),'cortesia':True,'motivo':courtesy['motivo']}
     row=db.execute('SELECT vencimento FROM assinaturas WHERE loja_id=?',(shop_id,)).fetchone()
     due=row['vencimento'] if row else None
+    from cobranca_saas import production_access
+    paid_until=production_access(db,shop_id,datetime.now(BRASIL).date().isoformat())
+    if paid_until:
+        real_due=paid_until+'T00:00:00'+datetime.now(BRASIL).strftime('%z')
+        if not due or datetime.fromisoformat(real_due)>datetime.fromisoformat(due): due=real_due
     active=bool(due and datetime.fromisoformat(due)>datetime.now(BRASIL))
     return {'ativa':active or not cobranca_ativa() or shop_id=='demo', 'status':'ativa' if active else 'vencida' if due else 'aguardando_pagamento', 'vencimento':due,'valor':90,'cobranca_ativa':cobranca_ativa()}
 

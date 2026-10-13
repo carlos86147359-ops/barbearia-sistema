@@ -27,6 +27,8 @@ jobs:
         run: PYTHONPATH=. python tests/test_mensalistas.py
       - name: Validar Asaas Sandbox sem rede e sem credenciais reais
         run: PYTHONPATH=. python tests/test_cobranca_saas.py
+      - name: Validar Asaas producao simulada sem rede
+        run: PYTHONPATH=. python tests/test_cobranca_producao.py
       - name: Validar promocoes e recebimentos em SQLite
         run: PYTHONPATH=. python tests/test_promocoes.py
       - name: Instalar navegador de teste
@@ -103,6 +105,12 @@ jobs:
         env:
           TEST_ASAAS_DATABASE_URL: postgresql://postgres:asaas-test-only@127.0.0.1:5432/asaas_test
         run: PYTHONPATH=. python tests/test_cobranca_saas.py
+      - name: Criar banco isolado para producao simulada
+        run: python -c "import psycopg; psycopg.connect('postgresql://postgres:asaas-test-only@127.0.0.1:5432/asaas_test',autocommit=True).execute('CREATE DATABASE asaas_production_test')"
+      - name: Validar producao simulada em PostgreSQL isolado
+        env:
+          TEST_ASAAS_DATABASE_URL: postgresql://postgres:asaas-test-only@127.0.0.1:5432/asaas_production_test
+        run: PYTHONPATH=. python tests/test_cobranca_producao.py
   publicacao:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest

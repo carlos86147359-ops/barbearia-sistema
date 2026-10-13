@@ -68,3 +68,58 @@ ASAAS_SANDBOX_TEST_EMAILS aceita uma lista de e-mails de proprietários de teste
 Rejeições HTTP 400 da criação de checkout encerram a tentativa sem repetir automaticamente. Timeouts continuam incertos. Para tentativas antigas incertas, o administrador pode encerrar no painel de homologação SOMENTE após conferir HTTP 400 nos logs privados do Asaas. Essa exceção é auditada, bloqueada fora do Sandbox e indisponível para donos de barbearias.
 
 A vinculação inicial recupera a cobrança pelo ID de evento e confirma checkoutSession, assinatura, cliente, valor e ciclo pela API. Para conciliação manual de eventos antigos, busca até 10 IDs de cobrança recebidos após a criação do contrato; esse limite de homologação precisa de índices de correlação antes de produção em escala.
+
+
+## Produção — oferta com nova contratação consentida
+
+A implementação suporta ambiente production com credenciais separadas:
+- ASAAS_ENV=production
+- ASAAS_PRODUCTION_API_KEY: chave real sem permissão de saques.
+- ASAAS_PRODUCTION_WEBHOOK_TOKEN: segredo exclusivo, aleatório >=32 caracteres.
+- ASAAS_PRODUCTION_ENABLED=false durante homologação. true permite novos checkouts.
+  Desabilitar esse flag NÃO interrompe webhooks/conciliação de contratos existentes.
+- PUBLIC_BASE_URL mantém a URL HTTPS existente.
+Não sobrescrever chaves Sandbox. A troca de ambiente só ocorre após testes.
+
+A oferta v1 é R$60/mês, com primeiro vencimento no dia da contratação e endDate
+no terceiro vencimento mensal (dois meses após o primeiro). O limite pertence
+à recorrência no Asaas, não a um cron que poderia dormir. Depois, o dono deve
+autorizar NOVO checkout de R$90/mês; nunca há aumento automático ou reuso do cartão
+para essa contratação. Cancelar a oferta não reinicia sua elegibilidade.
+saas_condicoes guarda preço/oferta, primeiro e último vencimentos e instante do aceite
+vinculado ao contrato/usuário. Os contratos e auditoria preservam o restante da prova.
+Uma nova contratação só é permitida quando não há contrato aberto nem período
+pago real vigente. Cancelamento não apaga cobranças existentes ou período pago.
+Conta de cortesia não recebe oferta nem pode criar cobrança.
+
+O acesso é calculado de saas_cobrancas de produção com status CONFIRMED/RECEIVED,
+vencimento já iniciado e periodo_fim futuro. O período termina à meia-noite de
+Brasília no próximo aniversário mensal. Recebimento atrasado não muda o calendário
+das outras mensalidades. Estorno/chargeback/exclusão retira somente esse recebimento;
+Pix anterior e cortesia continuam valendo. Sandbox nunca altera acesso real.
+Não há tolerância adicional por inadimplência nesta versão.
+As mensalidades das próprias barbearias e o caixa delas não recebem esses valores.
+
+Webhook de produção: POST /api/saas/webhook, somente quando ASAAS_ENV=production,
+authToken=ASAAS_PRODUCTION_WEBHOOK_TOKEN, versão 3 e envio sequencial.
+Configurar os eventos de cobranca_saas.EVENTS. O endpoint rejeita token Sandbox.
+Configurar/publicar primeiro; habilitar novas vendas por último.
+A resposta HTTP200 significa envelope persistido; consultar fila e logs de webhook
+para confirmar processamento. Monitorar a fila diariamente, especialmente Render Free.
+Há processamento após webhook e conciliação persistente enquanto o servidor está ativo.
+Render Free pode dormir e atrasar atualização de acesso; recorrência e endDate
+são executados pelo Asaas. Recomenda-se instância sempre ativa para operação contínua.
+Não há job externo configurado automaticamente nesta alteração.
+
+Testes obrigatórios: tests/test_cobranca_saas.py e tests/test_cobranca_producao.py,
+em SQLite e PostgreSQL. Os testes de produção são simulados, sem dinheiro/cartão real.
+Antes de habilitar vendas, homologar checkout Sandbox com valor60 e endDate,
+geração dos três vencimentos, ausência de quarta cobrança, cancelamento, estorno,
+transição via novo checkout90 e interfaces mobile. Um pagamento real de validação,
+se desejado, precisa ser executado pelo titular; nunca usar cartão fictício em produção.
+A troca de cartão pelo SaaS segue indisponível: não coletamos PAN/CVV.
+O histórico contém links hospedados de fatura para consulta/regularização.
+
+Fontes:
+https://docs.asaas.com/docs/checkout-com-assinatura-recorrente
+https://docs.asaas.com/docs/faq-assinaturas
