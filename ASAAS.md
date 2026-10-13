@@ -123,3 +123,5 @@ O histórico contém links hospedados de fatura para consulta/regularização.
 Fontes:
 https://docs.asaas.com/docs/checkout-com-assinatura-recorrente
 https://docs.asaas.com/docs/faq-assinaturas
+
+Homologação da oferta limitada: manter ASAAS_ENV=sandbox e habilitar ASAAS_SANDBOX_PROMO_TEST=true. Isso oferece o mesmo checkout60/endDate somente às contas de teste permitidas; nunca libera acesso real. Desligar o flag após testar. Os testes antigos continuam em R$90 quando esse flag está ausente.

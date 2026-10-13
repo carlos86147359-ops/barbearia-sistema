@@ -62,6 +62,10 @@ def enabled():
     return bool(environment() and api_key() and len(webhook_secret()) >= 32 and webhook_secret() != api_key())
 
 
+def limited_offer_enabled():
+    return environment() == 'production' or (environment() == 'sandbox' and os.environ.get('ASAAS_SANDBOX_PROMO_TEST','').lower() == 'true')
+
+
 def production_sales_enabled():
     return os.environ.get('ASAAS_PRODUCTION_ENABLED', '').lower() == 'true'
 
@@ -193,19 +197,19 @@ def instalar(app,c):
                               (user['loja_id'],environment())).fetchall()
             payments = db.execute('SELECT valor_centavos,status,vencimento,pago_em,fatura_url FROM saas_cobrancas WHERE loja_id=? AND ambiente=? ORDER BY vencimento DESC,id DESC LIMIT 100',
                                   (user['loja_id'],environment())).fetchall()
-        return {'disponivel':True,'ambiente':environment(),'valor_centavos':6000 if environment() == 'production' and not used_offer(db=None, shop=user['loja_id']) else 9000,
+        return {'disponivel':True,'ambiente':environment(),'oferta_limitada':limited_offer_enabled(),'valor_centavos':6000 if limited_offer_enabled() and not used_offer(db=None, shop=user['loja_id']) else 9000,
                 'vendas_habilitadas':environment() == 'sandbox' or production_sales_enabled(),
                 'contratos':[contract_view(r) for r in rows], 'pagamentos':[dict(r) for r in payments]}
 
     @app.post('/api/saas/checkout')
     async def checkout(request:Request):
         body = {}
-        if environment() == 'production' and enabled():
+        if limited_offer_enabled() and enabled():
             raw = await request.body()
             if len(raw)>4096: raise HTTPException(413,'Pedido excede o limite.')
             try: body = json.loads(raw)
             except (ValueError,TypeError): raise HTTPException(422,'Confirme as condições da contratação.') from None
-        if environment() == 'production' and enabled() and (not isinstance(body,dict) or body.get('aceite_condicoes') != 'tres_meses_60_depois_nova_contratacao_90_v1'):
+        if limited_offer_enabled() and enabled() and (not isinstance(body,dict) or body.get('aceite_condicoes') != 'tres_meses_60_depois_nova_contratacao_90_v1'):
             raise HTTPException(422,'Confirme as condições da contratação.')
         now = int(time.time())
         base = os.environ.get('PUBLIC_BASE_URL','').rstrip('/')
@@ -225,7 +229,7 @@ def instalar(app,c):
                 if old['status'] == 'checkout' and old['checkout_id']: return contract_view(old)
                 raise HTTPException(409,'Já existe uma contratação ou tentativa em conferência. Sincronize antes de criar outra.')
             first_due = datetime.now(c['BRASIL']).date().isoformat()
-            promo = environment() == 'production' and not used_offer(db,user['loja_id'])
+            promo = limited_offer_enabled() and not used_offer(db,user['loja_id'])
             price = 6000 if promo else 9000
             last_due = add_months(first_due,2) if promo else None
             if environment() == 'production':
@@ -327,10 +331,8 @@ def instalar(app,c):
         if not subscription.get('deleted'):
             if subscription.get('id') != sid or subscription.get('customer') != row['cliente_id'] or subscription.get('cycle') != 'MONTHLY' or subscription.get('billingType') != 'CREDIT_CARD' or cents(subscription.get('value')) != row['valor_centavos']:
                 raise ValueError('Assinatura fora do contrato.')
-        terms = None
-        if row['ambiente'] == 'production':
-            terms = db.execute('SELECT * FROM saas_condicoes WHERE id=?',(cid,)).fetchone()
-        if row['ambiente'] == 'production' and not subscription.get('deleted'):
+        terms = db.execute('SELECT * FROM saas_condicoes WHERE id=?',(cid,)).fetchone()
+        if (row['ambiente'] == 'production' or (terms and terms['ultimo_vencimento'])) and not subscription.get('deleted'):
             expected_end = terms['ultimo_vencimento'] if terms else None
             actual_end = str(subscription.get('endDate') or '')[:10] or None
             if not terms or actual_end != expected_end:
@@ -347,7 +349,7 @@ def instalar(app,c):
         for payment in payments: store_payment(db,row,payment)
         paid = db.execute("SELECT MAX(periodo_fim) AS fim FROM saas_cobrancas WHERE contrato_id=? AND status IN ('RECEIVED','CONFIRMED','RECEIVED_IN_CASH')",(cid,)).fetchone()['fim']
         late = db.execute("SELECT COUNT(*) AS n FROM saas_cobrancas WHERE contrato_id=? AND status IN ('OVERDUE','CREDIT_CARD_CAPTURE_REFUSED')",(cid,)).fetchone()['n']
-        ended = row['ambiente'] == 'production' and terms and terms['ultimo_vencimento'] and datetime.now(c['BRASIL']).date().isoformat() > terms['ultimo_vencimento']
+        ended = terms and terms['ultimo_vencimento'] and datetime.now(c['BRASIL']).date().isoformat() > terms['ultimo_vencimento']
         canceled = subscription.get('deleted') or subscription.get('status') == 'INACTIVE' or ended
         status = 'cancelada' if canceled else 'atrasada' if late else 'ativa' if paid else 'aguardando_pagamento'
         next_due = subscription.get('nextDueDate')

@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory() as tmp:
         if path.startswith('/payments?'):
             return {'data':[]} # Webhook recupera cobrança canônica.
         if path.startswith('/payments/'):
-            return dict(payments[path.split('/')[2]])
+            return {'deleted':True} if payments[path.split('/')[2]].get('deleted') else dict(payments[path.split('/')[2]])
         if path.startswith('/subscriptions/'):
             sid=path.split('/')[2]
             if method=='PUT':
@@ -102,6 +102,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_2',6).status_code==200
     payments['pay_2'].update(status='CONFIRMED',paymentDate=start)
     assert event('pay_2',7).status_code==200
+    assert a.post('/api/saas/contratos/'+second['id']+'/cancelar',headers=headers[0]).status_code==200
+    assert a.get('/api/assinatura').json()['ativa'] is True
+    assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==409
     # Exclusão canônica de pagamento também revoga o acesso.
     payments['pay_2'].update(deleted=True,omit=True)
     assert event('pay_2',8,'PAYMENT_DELETED').status_code==200
