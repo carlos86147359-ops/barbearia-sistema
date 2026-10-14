@@ -18,6 +18,7 @@ const fs=require('node:fs/promises');
   state.contratos=[{id:'test-contract',ambiente:'production',status:'checkout',forma_pagamento:route.request().postDataJSON().forma_pagamento||'CREDIT_CARD',valor_centavos:6000,checkout_url:'https://www.asaas.com/checkoutSession/show?id=test',condicoes:{ultimo_vencimento:'2027-01-13'}}];
   await route.fulfill({json:state.contratos[0]});
  });
+ await page.route('**/api/saas/contratos/*/pix',route=>route.fulfill({json:{situacao:'pendente',payload:'000201PIX_DE_TESTE_NAO_PAGAR_1234567890',valor_centavos:6000,expira_em:'2099-01-01T23:59:59-03:00',matriz:Array.from({length:29},(_,y)=>Array.from({length:29},(_,x)=>x>3&&y>3&&x<25&&y<25&&(x+y)%2===0))}}));
  await page.route('https://www.asaas.com/checkoutSession/show?**',route=>route.fulfill({contentType:'text/html',body:'<h1>PIX hospedado de teste</h1>'}));
  await page.goto(base+'/painel#plano');await page.reload();
  await page.getByRole('heading',{name:'Minha assinatura',exact:true}).waitFor();
@@ -48,6 +49,18 @@ const fs=require('node:fs/promises');
  assert.equal(requests[1].aceite_pix,'pix_mensal_sem_debito_automatico_v1');
  await page.goto(base+'/painel#plano');
  await page.getByRole('link',{name:'Abrir QR Code e código PIX',exact:true}).waitFor();
+ const pixImage=page.getByRole('img',{name:'QR Code PIX da mensalidade',exact:true});
+ await pixImage.waitFor();
+ for(const width of [360,390,768,1440]){
+  await page.setViewportSize({width,height:900});
+  const box=await pixImage.boundingBox();assert.ok(box&&box.width>150&&Math.abs(box.width-box.height)<2);
+  const size=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
+  assert.ok(size.scroll<=size.width+1);
+  await page.screenshot({path:'test-results/pix-local-'+width+'.png',fullPage:true});
+ }
+ assert.equal(await page.locator('[data-pix-code]').inputValue(),'000201PIX_DE_TESTE_NAO_PAGAR_1234567890');
+ await page.getByRole('button',{name:'Atualizar QR Code',exact:true}).click();
+ await pixImage.waitFor();
  state={...state,valor_centavos:9000,contratos:[],vendas_habilitadas:false};
  await page.reload();await page.getByRole('button',{name:'Contratar R$ 90/mês',exact:true}).waitFor();
  assert.equal(await page.locator('[data-real-contract]').isDisabled(),true);
