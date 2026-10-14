@@ -46,6 +46,7 @@ with tempfile.TemporaryDirectory() as tmp:
             return {'data':[dict(p) for p in payments.values() if p['checkoutSession']==co and not p.get('omit')],'hasMore':False}
         if path.startswith('/payments/'):
             p=payments[path.split('/')[2]]
+            if method=='DELETE': p['deleted']=True;return {'deleted':True}
             return {'deleted':True} if p.get('deleted') else dict(p)
         if method=='POST' and path.endswith('/cancel'): return {}
         raise AssertionError((method,path))
@@ -105,4 +106,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.post('/api/saas/sincronizar',headers=headers[0]).status_code==200
     assert len(a.get('/api/saas/assinatura').json()['pagamentos'])==4
     assert b.get('/api/saas/assinatura').json()['pagamentos']==[]
+    # Cancelar PIX pendente invalida cobrança e permite nova contratação.
+    assert b.post('/api/saas/checkout',json=pix,headers=headers[1]).status_code==200
+    other=b.get('/api/saas/assinatura').json()['contratos'][0]
+    assert event('pay_pix_5',40,'PAYMENT_CREATED').status_code==200
+    assert b.post('/api/saas/contratos/'+other['id']+'/cancelar',headers=headers[1]).status_code==200
+    assert payments['pay_pix_5']['deleted'] is True
+    assert b.post('/api/saas/checkout',json=pix,headers=headers[1]).status_code==200
+    assert checkouts[-1]['items'][0]['value']==60
 print('OK PIX: checkout avulso, preço no servidor, confirmação, isolamento, deduplicação, três meses, estorno e exclusão.')
