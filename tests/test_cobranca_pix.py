@@ -1,4 +1,7 @@
 """Produção simulada: nenhum acesso à rede e nenhum cartão/chave real."""
+import asyncio
+import threading
+import httpx
 import importlib.util
 import json
 import os
@@ -61,7 +64,26 @@ with tempfile.TemporaryDirectory() as tmp:
     assert public.post('/api/saas/checkout',json=pix).status_code==401
     assert a.post('/api/saas/checkout',json={**consent,'forma_pagamento':'PIX'},headers=headers[0]).status_code==422
     assert a.post('/api/saas/checkout',json={**consent,'forma_pagamento':'BOLETO'},headers=headers[0]).status_code==422
-    assert a.post('/api/saas/checkout',json=pix,headers=headers[0]).status_code==200
+    # Autenticação precede leitura; payload é limitado durante streaming.
+    assert public.post('/api/saas/checkout',content=b'x'*5000).status_code==401
+    assert a.post('/api/saas/checkout',content=(b'x'*n for n in (2000,2000,1000)),headers=headers[0]).status_code==413
+    assert not checkouts
+    # A API síncrona pode esperar; o event loop precisa continuar respondendo.
+    heartbeat=threading.Event()
+    original_api=billing.api
+    def slow_api(method,path,body=None):
+        if method=='POST' and path=='/checkouts':
+            assert heartbeat.wait(5), 'Checkout bloqueou o event loop'
+        return original_api(method,path,body)
+    billing.api=slow_api
+    async def responsive_checkout():
+        loop=asyncio.get_running_loop()
+        loop.call_later(0.05,heartbeat.set)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=appmod.app),base_url='http://testserver',cookies=dict(a.cookies)) as client:
+            response=await client.post('/api/saas/checkout',json=pix,headers=headers[0])
+            assert response.status_code==200,response.text
+    asyncio.run(responsive_checkout())
+    billing.api=original_api
     first=a.get('/api/saas/assinatura').json()['contratos'][0]
     assert first['forma_pagamento']=='PIX' and first['condicoes']['oferta']=='pix_60_v1'
     assert a.post('/api/saas/checkout',json=pix,headers=headers[0]).status_code==200 and len(checkouts)==1
@@ -73,7 +95,12 @@ with tempfile.TemporaryDirectory() as tmp:
     payments['pay_pix_1']['omit']=True
     assert a.get(qr_url).json()['situacao']=='aguardando_dados'
     payments['pay_pix_1']['omit']=False
+    before_qr=len(calls)
     qr_response=a.get(qr_url)
+    assert len(calls)-before_qr==3  # discovery, canonical payment, QR; no full sync
+    with appmod.banco() as db:
+        assert not db.execute('SELECT id FROM saas_cobrancas WHERE contrato_id=?',(first['id'],)).fetchone()
+    assert a.get('/api/assinatura').json()['ativa'] is False
     assert qr_response.status_code==200,qr_response.text
     qr_data=qr_response.json()
     assert qr_response.headers['cache-control']=='no-store'
@@ -87,6 +114,12 @@ with tempfile.TemporaryDirectory() as tmp:
         image=cv2.resize((1-matrix)*255,None,fx=8,fy=8,interpolation=cv2.INTER_NEAREST)
         decoded,_,_=cv2.QRCodeDetector().detectAndDecode(image)
         assert decoded==qr_payload
+    payments['pay_pix_1']['billingType']='CREDIT_CARD'
+    assert a.get(qr_url).status_code==409
+    payments['pay_pix_1']['billingType']='PIX'
+    payments['pay_pix_1']['value']=1
+    assert a.get(qr_url).status_code==409
+    payments['pay_pix_1']['value']=60
     qr_expired=True
     assert a.get(qr_url).json()['situacao']=='expirado'
     qr_expired=False
