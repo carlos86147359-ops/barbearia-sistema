@@ -52,6 +52,7 @@ const fs=require('node:fs/promises');
  await page.getByRole('link',{name:'Abrir QR Code e código PIX',exact:true}).waitFor();
  const pixImage=page.getByRole('img',{name:'QR Code PIX da mensalidade',exact:true});
  await pixImage.waitFor();
+ state.contratos[0].status='expirada';await page.reload();await pixImage.waitFor();
  for(const width of [360,390,768,1440]){
   await page.setViewportSize({width,height:900});
   const box=await pixImage.boundingBox();assert.ok(box&&box.width>150&&Math.abs(box.width-box.height)<2);
