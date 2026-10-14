@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory() as tmp:
     spec=importlib.util.spec_from_file_location('production_test_app',ROOT/'app.py')
     appmod=importlib.util.module_from_spec(spec);spec.loader.exec_module(appmod)
     import cobranca_saas as billing
-    a,b,public=TestClient(appmod.app),TestClient(appmod.app),TestClient(appmod.app)
+    a,b,public=TestClient(appmod.app),TestClient(appmod.app,client=('198.51.100.2',50000)),TestClient(appmod.app)
     headers=[]
     for i,client in enumerate((a,b)):
         r=client.post('/api/cadastro',json={'nome':'Produção '+str(i),'slug':'producao-'+str(i),'email':f'prod{i}@example.test','senha':'SenhaTeste!12345','aceite_termos':True})
