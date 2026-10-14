@@ -136,3 +136,8 @@ Reutiliza saas_contratos, saas_condicoes (ofertas pix_60_v1 e pix_90_v1), saas_c
 Até três mensalidades PIX promocionais de R$60 por estabelecimento/ambiente. Meses PIX consumidos reduzem os ciclos restantes ao iniciar a oferta no cartão; uma oferta de cartão já utilizada continua sujeita às condições anteriores, sem reinício após cancelamento. O quarto PIX custa R$90, informado antes do aceite. Impede contratação durante período já pago ou recorrência/cartão ativa.
 
 Teste sem rede: tests/test_cobranca_pix.py em SQLite e PostgreSQL isolados. Teste de integração real deve ser feito no Sandbox; não transferir dinheiro real durante homologação. QR Code e copia e cola são exibidos no checkout hospedado do Asaas. Chaves e QR não são fabricados no frontend; redirecionamento nunca comprova pagamento.
+
+
+### Prazo do checkout PIX
+
+Novos checkouts PIX têm validade de 1440 minutos (24 horas), dentro do limite oficial do Asaas. O cartão continua em 60 minutos. A expiração efetiva do QR também é conferida pela API antes da exibição; não reativar códigos/cobranças já excluídos pelo provedor. A alteração vale para novos checkouts e não gera cobranças por si só.

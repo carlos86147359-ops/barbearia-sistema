@@ -37,6 +37,7 @@ with tempfile.TemporaryDirectory() as tmp:
         if method=='POST' and path=='/checkouts':
             checkouts.append(body);idx=len(checkouts)
             assert body['billingTypes']==['PIX'] and body['chargeTypes']==['DETACHED']
+            assert body['minutesToExpire']==1440
             assert 'subscription' not in body
             pid='pay_pix_'+str(idx);co='checkout_pix_'+str(idx)
             payments[pid]={'id':pid,'checkoutSession':co,'customer':'cus_pix','billingType':'PIX','value':body['items'][0]['value'],'dueDate':datetime.now(appmod.BRASIL).date().isoformat(),'status':'PENDING','invoiceUrl':'https://www.asaas.com/i/pix-test'}

@@ -268,7 +268,7 @@ def instalar(app,c):
         # Timeout nunca provoca uma segunda criação automática.
         try:
             result = api('POST','/checkouts',{'externalReference':'havo:'+cid,
-                'billingTypes':[method],'chargeTypes':['DETACHED' if method == 'PIX' else 'RECURRENT'],'minutesToExpire':60,
+                'billingTypes':[method],'chargeTypes':['DETACHED' if method == 'PIX' else 'RECURRENT'],'minutesToExpire':1440 if method == 'PIX' else 60,
                 'callback':{k:base+'/painel#plano' for k in ('successUrl','cancelUrl','expiredUrl')},
                 'items':[{'name':'Grupo Havo - Mensal TESTE' if environment() == 'sandbox' else 'Grupo Havo - Mensal',
                           'description':'Homologação Sandbox, sem cobrança real' if environment() == 'sandbox' else ('Uma mensalidade via PIX. Renovação exige novo pagamento; sem débito automático.' if method == 'PIX' else 'R$60 por mês por 3 ciclos. Depois exige nova contratação de R$90/mês.' if promo else 'R$90 por mês. Recorrência mensal até cancelamento.'),
