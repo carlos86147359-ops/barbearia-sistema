@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory() as tmp:
             assert body['billingTypes']==['PIX'] and body['chargeTypes']==['DETACHED']
             assert 'subscription' not in body
             pid='pay_pix_'+str(idx);co='checkout_pix_'+str(idx)
-            payments[pid]={'id':pid,'checkoutSession':co,'customer':'cus_pix','billingType':'PIX','value':body['items'][0]['value'],'dueDate':date.today().isoformat(),'status':'PENDING','invoiceUrl':'https://www.asaas.com/i/pix-test'}
+            payments[pid]={'id':pid,'checkoutSession':co,'customer':'cus_pix','billingType':'PIX','value':body['items'][0]['value'],'dueDate':datetime.now(appmod.BRASIL).date().isoformat(),'status':'PENDING','invoiceUrl':'https://www.asaas.com/i/pix-test'}
             return {'id':co}
         if path.startswith('/payments?'):
             co=parse_qs(urlparse(path).query)['checkoutSession'][0]
@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_pix_1',1).status_code==200
     assert a.get('/api/assinatura').json()['ativa'] is False
     # Dados financeiros do webhook não concedem acesso.
-    payments['pay_pix_1'].update(status='RECEIVED',paymentDate=date.today().isoformat(),value=1)
+    payments['pay_pix_1'].update(status='RECEIVED',paymentDate=datetime.now(appmod.BRASIL).date().isoformat(),value=1)
     assert event('pay_pix_1',2).status_code==200
     assert a.get('/api/assinatura').json()['ativa'] is False
     payments['pay_pix_1']['value']=60
@@ -90,13 +90,13 @@ with tempfile.TemporaryDirectory() as tmp:
         assert a.post('/api/saas/checkout',json=pix,headers=headers[0]).status_code==200
         assert checkouts[-1]['items'][0]['value']==(60 if cycle<=3 else 90)
         pid='pay_pix_'+str(cycle)
-        payments[pid].update(status='RECEIVED',paymentDate=date.today().isoformat())
+        payments[pid].update(status='RECEIVED',paymentDate=datetime.now(appmod.BRASIL).date().isoformat())
         assert event(pid,cycle+10).status_code==200
         assert a.get('/api/assinatura').json()['ativa'] is True
         if cycle<4:
             # Simula fim do período pago sem esperar um mês.
             with appmod.banco() as db:
-                db.execute('UPDATE saas_cobrancas SET periodo_fim=? WHERE ambiente=?',(date.today().isoformat(),'production'))
+                db.execute('UPDATE saas_cobrancas SET periodo_fim=? WHERE ambiente=?',(datetime.now(appmod.BRASIL).date().isoformat(),'production'))
     assert a.get('/api/saas/assinatura').json()['valor_centavos']==9000
     payments['pay_pix_4'].update(deleted=True,omit=True)
     assert event('pay_pix_4',30,'PAYMENT_DELETED').status_code==200

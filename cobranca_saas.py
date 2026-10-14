@@ -580,6 +580,19 @@ def instalar(app,c):
                     raise HTTPException(502,'O Asaas ainda não confirmou o cancelamento. Sincronize antes de repetir.')
         elif row['checkout_id']:
             api('POST','/checkouts/'+ident(row['checkout_id'])+'/cancel')
+            with banco() as db: terms = db.execute('SELECT oferta FROM saas_condicoes WHERE id=?',(cid,)).fetchone()
+            if terms and terms['oferta'].startswith('pix_'):
+                sync_contract(cid)
+                with banco() as db:
+                    pending_pix = db.execute("SELECT provedor_id FROM saas_cobrancas WHERE contrato_id=? AND ambiente=? AND status IN ('PENDING','OVERDUE')",(cid,row['ambiente'])).fetchall()
+                for p in pending_pix:
+                    pid = ident(p['provedor_id'])
+                    canonical = api('GET','/payments/'+pid)
+                    if canonical.get('checkoutSession') != row['checkout_id']: raise HTTPException(502,'Vínculo PIX exige conferência.')
+                    if canonical.get('status') in ('PENDING','OVERDUE'):
+                        api('DELETE','/payments/'+pid)
+                        if not api('GET','/payments/'+pid).get('deleted'): raise HTTPException(502,'Cancelamento PIX não confirmado.')
+                sync_contract(cid)
         else: raise HTTPException(409,'Tentativa sem confirmação; confira os logs do Asaas antes de cancelar.')
         with banco() as db:
             lock(db)
