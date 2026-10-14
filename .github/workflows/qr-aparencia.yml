@@ -60,6 +60,8 @@ jobs:
           node tests/test_frontend.cjs
       - name: Testar interface de cobranca e consentimento
         run: node tests/test_cobranca_browser.cjs
+      - name: Decodificar QR PIX efetivamente desenhado no navegador
+        run: python tests/test_pix_render.py
       - name: Testar central de notificacoes e experiencia mobile
         run: node tests/test_notificacoes_browser.cjs
       - name: Testar enquadramento e fotos dos profissionais

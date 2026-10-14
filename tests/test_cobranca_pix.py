@@ -79,6 +79,8 @@ with tempfile.TemporaryDirectory() as tmp:
     assert qr_data['payload']==qr_payload and qr_data['valor_centavos']==6000
     assert all(isinstance(v,bool) for row in qr_data['matriz'] for v in row)
     if os.environ.get('QR_DECODE_TEST'):
+        folder=ROOT/'test-results';folder.mkdir(exist_ok=True)
+        (folder/'pix-qr-fixture.json').write_text(json.dumps(qr_data),encoding='utf-8')
         import cv2,numpy as np
         matrix=np.array(qr_data['matriz'],dtype=np.uint8)
         image=cv2.resize((1-matrix)*255,None,fx=8,fy=8,interpolation=cv2.INTER_NEAREST)
