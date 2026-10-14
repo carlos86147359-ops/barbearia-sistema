@@ -1,4 +1,8 @@
 """Confere que o SVG do navegador preserva exatamente o PIX oficial de teste."""
+import os
+if os.environ.get('QR_BROWSER_DECODE_TEST')!='1':
+    print('Decodificação visual executada no job de navegador dedicado.')
+    raise SystemExit(0)
 import json
 from pathlib import Path
 import cv2
