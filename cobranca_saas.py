@@ -175,14 +175,22 @@ def instalar(app,c):
             out['checkout_url'] = ('https://www.asaas.com' if row['ambiente'] == 'production' else 'https://sandbox.asaas.com')+'/checkoutSession/show?id='+urllib.parse.quote(row['checkout_id'])
         with banco() as db: terms = db.execute('SELECT * FROM saas_condicoes WHERE id=?',(row['id'],)).fetchone()
         out['condicoes'] = dict(terms) if terms else None
+        out['forma_pagamento'] = 'PIX' if terms and terms['oferta'].startswith('pix_') else 'CREDIT_CARD'
+        if out['forma_pagamento'] == 'PIX' and row['pago_ate']: out['status'] = 'quitada'
         return out
 
     @app.get('/cobranca-saas.js')
     def script(): return FileResponse(c['ROOT']/'cobranca-saas.js',media_type='application/javascript')
 
+    def pix_cycles(db, shop):
+        if db is None:
+            with banco() as conn: return pix_cycles(conn,shop)
+        # Cada mês promocional pago consome uma posição, inclusive após estorno.
+        return db.execute("SELECT COUNT(DISTINCT s.id) AS n FROM saas_contratos s JOIN saas_condicoes t ON t.id=s.id JOIN saas_cobrancas p ON p.contrato_id=s.id AND p.ambiente=s.ambiente WHERE s.loja_id=? AND s.ambiente=? AND t.oferta='pix_60_v1' AND p.pago_em IS NOT NULL",(shop,environment())).fetchone()['n']
+
     def used_offer(db=None, shop=None):
         def check(conn):
-            return bool(conn.execute("SELECT 1 FROM saas_condicoes t JOIN saas_contratos s ON s.id=t.id WHERE t.loja_id=? AND t.ambiente=? AND t.oferta=? AND (s.assinatura_id IS NOT NULL OR s.status IN ('criando','incerta','checkout')) LIMIT 1",
+            return pix_cycles(conn,shop) >= 3 or bool(conn.execute("SELECT 1 FROM saas_condicoes t JOIN saas_contratos s ON s.id=t.id WHERE t.loja_id=? AND t.ambiente=? AND t.oferta=? AND (s.assinatura_id IS NOT NULL OR s.status IN ('criando','incerta','checkout')) LIMIT 1",
                                      (shop, environment(), 'tres_meses_60_v1')).fetchone())
         if db is not None: return check(db)
         with banco() as conn: return check(conn)
@@ -203,6 +211,7 @@ def instalar(app,c):
         return {'disponivel':True,'ambiente':environment(),'oferta_limitada':limited_offer_enabled(),'valor_centavos':6000 if limited_offer_enabled() and not used_offer(db=None, shop=user['loja_id']) else 9000,
                 'vendas_habilitadas':environment() == 'sandbox' or production_sales_enabled(),
                 'acesso_atual':access,'pagamentos_manuais':manual,'contratacao_disponivel':environment() == 'sandbox' or can_contract,
+                'pix_disponivel':limited_offer_enabled(), 'ciclos_promocionais_restantes':max(0,3-pix_cycles(None,user['loja_id'])),
                 'contratos':[contract_view(r) for r in rows], 'pagamentos':[dict(r) for r in payments]}
 
     @app.post('/api/saas/checkout')
@@ -215,6 +224,10 @@ def instalar(app,c):
             except (ValueError,TypeError): raise HTTPException(422,'Confirme as condições da contratação.') from None
         if limited_offer_enabled() and enabled() and (not isinstance(body,dict) or body.get('aceite_condicoes') != 'tres_meses_60_depois_nova_contratacao_90_v1'):
             raise HTTPException(422,'Confirme as condições da contratação.')
+        method = body.get('forma_pagamento','CREDIT_CARD')
+        if method not in ('CREDIT_CARD','PIX'): raise HTTPException(422,'Forma de pagamento inválida.')
+        if method == 'PIX' and not limited_offer_enabled(): raise HTTPException(409,'PIX indisponível neste modo de homologação.')
+        if method == 'PIX' and body.get('aceite_pix') != 'pix_mensal_sem_debito_automatico_v1': raise HTTPException(422,'Confirme as condições do PIX mensal.')
         now = int(time.time())
         base = os.environ.get('PUBLIC_BASE_URL','').rstrip('/')
         p = urllib.parse.urlparse(base)
@@ -230,12 +243,15 @@ def instalar(app,c):
             lock(db)
             old = db.execute("SELECT * FROM saas_contratos WHERE loja_id=? AND ambiente=? AND status NOT IN ('cancelada','expirada')",(user['loja_id'],environment())).fetchone()
             if old:
-                if old['status'] == 'checkout' and old['checkout_id']: return contract_view(old)
+                if old['status'] == 'checkout' and old['checkout_id']:
+                    view = contract_view(old)
+                    if view['forma_pagamento'] != method: raise HTTPException(409,'Já existe um checkout de outra forma de pagamento. Cancele-o antes de trocar.')
+                    return view
                 raise HTTPException(409,'Já existe uma contratação ou tentativa em conferência. Sincronize antes de criar outra.')
             first_due = datetime.now(c['BRASIL']).date().isoformat()
             promo = limited_offer_enabled() and not used_offer(db,user['loja_id'])
             price = 6000 if promo else 9000
-            last_due = add_months(first_due,2) if promo else None
+            last_due = first_due if method == 'PIX' else add_months(first_due,max(0,2-pix_cycles(db,user['loja_id']))) if promo else None
             if environment() == 'production':
                 pending = db.execute("SELECT 1 FROM saas_cobrancas WHERE loja_id=? AND ambiente=? AND status IN ('PENDING','OVERDUE','CREDIT_CARD_CAPTURE_REFUSED','AWAITING_RISK_ANALYSIS','AUTHORIZED') LIMIT 1",(user['loja_id'],'production')).fetchone()
                 if pending: raise HTTPException(409,'Existe mensalidade pendente. Regularize a fatura antes de criar nova assinatura.')
@@ -246,17 +262,17 @@ def instalar(app,c):
             db.execute('INSERT INTO saas_contratos(id,loja_id,ambiente,usuario_id,valor_centavos,status,criado_em,atualizado_em) VALUES(?,?,?,?,?,?,?,?)',
                        (cid,user['loja_id'],environment(),user['id'],price,'criando',now,now))
             db.execute('INSERT INTO saas_condicoes(id,loja_id,ambiente,oferta,primeiro_vencimento,ultimo_vencimento,aceite_em) VALUES(?,?,?,?,?,?,?)',
-                       (cid,user['loja_id'],environment(),'tres_meses_60_v1' if promo else 'mensal_90_v1',first_due,last_due,now))
+                       (cid,user['loja_id'],environment(),('pix_60_v1' if promo else 'pix_90_v1') if method == 'PIX' else ('tres_meses_60_v1' if promo else 'mensal_90_v1'),first_due,last_due,now))
         # A tentativa é confirmada no banco ANTES da chamada externa.
         # Timeout nunca provoca uma segunda criação automática.
         try:
             result = api('POST','/checkouts',{'externalReference':'havo:'+cid,
-                'billingTypes':['CREDIT_CARD'],'chargeTypes':['RECURRENT'],'minutesToExpire':60,
+                'billingTypes':[method],'chargeTypes':['DETACHED' if method == 'PIX' else 'RECURRENT'],'minutesToExpire':60,
                 'callback':{k:base+'/painel#plano' for k in ('successUrl','cancelUrl','expiredUrl')},
                 'items':[{'name':'Grupo Havo - Mensal TESTE' if environment() == 'sandbox' else 'Grupo Havo - Mensal',
-                          'description':'Homologação Sandbox, sem cobrança real' if environment() == 'sandbox' else ('R$60 por mês por 3 ciclos. Depois exige nova contratação de R$90/mês.' if promo else 'R$90 por mês. Recorrência mensal até cancelamento.'),
+                          'description':'Homologação Sandbox, sem cobrança real' if environment() == 'sandbox' else ('Uma mensalidade via PIX. Renovação exige novo pagamento; sem débito automático.' if method == 'PIX' else 'R$60 por mês por 3 ciclos. Depois exige nova contratação de R$90/mês.' if promo else 'R$90 por mês. Recorrência mensal até cancelamento.'),
                           'quantity':1,'value':price/100}],
-                'subscription':{'cycle':'MONTHLY','nextDueDate':datetime.now(c['BRASIL']).strftime('%Y-%m-%d %H:%M:%S'),**({'endDate':last_due+' 23:59:59'} if last_due else {})}})
+                **({'subscription':{'cycle':'MONTHLY','nextDueDate':datetime.now(c['BRASIL']).strftime('%Y-%m-%d %H:%M:%S'),**({'endDate':last_due+' 23:59:59'} if last_due else {})}} if method != 'PIX' else {})})
             checkout_id = ident(result.get('id'))
         except CheckoutRejected:
             with banco() as db:
@@ -303,6 +319,42 @@ def instalar(app,c):
         db.execute('INSERT INTO saas_cobrancas(id,loja_id,contrato_id,ambiente,provedor_id,valor_centavos,status,vencimento,pago_em,periodo_fim,fatura_url,atualizado_em) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ambiente,provedor_id) DO UPDATE SET status=excluded.status,pago_em=excluded.pago_em,periodo_fim=excluded.periodo_fim,fatura_url=excluded.fatura_url,atualizado_em=excluded.atualizado_em',
                    (row['ambiente']+':'+pid,row['loja_id'],row['id'],row['ambiente'],pid,value,status,due,paid,end,safe_invoice(payment.get('invoiceUrl')),int(time.time())))
 
+    def sync_pix(db,row,terms,payment_hint=None):
+        # Checkout avulso: confirmar cobrança canônica, nunca CHECKOUT_PAID sozinho.
+        page = api('GET','/payments?'+urllib.parse.urlencode({'checkoutSession':row['checkout_id'],'limit':100}))
+        if page.get('hasMore'): raise ValueError('Checkout PIX com cobranças inesperadas.')
+        candidates = {ident(p['id']):p for p in page.get('data',[]) if p.get('checkoutSession') == row['checkout_id']}
+        known = db.execute('SELECT * FROM saas_cobrancas WHERE contrato_id=? AND ambiente=?',(row['id'],row['ambiente'])).fetchall()
+        for p in known: candidates[p['provedor_id']] = None
+        if payment_hint and payment_hint.get('checkoutSession') == row['checkout_id']: candidates[ident(payment_hint['id'])] = None
+        if len(candidates)>1: raise ValueError('Mais de uma cobrança no checkout PIX.')
+        for pid in candidates:
+            p = api('GET','/payments/'+pid)
+            previous = next((k for k in known if k['provedor_id']==pid),None)
+            if p.get('deleted'):
+                if not previous: continue
+                db.execute("UPDATE saas_cobrancas SET status='DELETED',atualizado_em=? WHERE ambiente=? AND provedor_id=?",(int(time.time()),row['ambiente'],pid))
+                continue
+            if p.get('id') != pid or p.get('checkoutSession') != row['checkout_id'] or p.get('subscription') or p.get('billingType') != 'PIX' or cents(p.get('value')) != row['valor_centavos']:
+                raise ValueError('Cobrança PIX fora do contrato.')
+            customer = ident(p.get('customer'))
+            if row['cliente_id'] and customer != row['cliente_id']: raise ValueError('Cliente PIX incompatível.')
+            status = str(p.get('status','PENDING'))[:60]
+            paid = p.get('paymentDate') or p.get('confirmedDate') or p.get('clientPaymentDate')
+            paid = date.fromisoformat(str(paid)[:10]).isoformat() if paid else None
+            if status in ('CONFIRMED','RECEIVED') and not paid: raise ValueError('PIX sem data de confirmação.')
+            if status not in ('CONFIRMED','RECEIVED'): paid = previous['pago_em'] if previous else None
+            start = previous['vencimento'] if previous and previous['pago_em'] else max(terms['primeiro_vencimento'],paid or terms['primeiro_vencimento'])
+            end = previous['periodo_fim'] if previous and previous['pago_em'] else month_end(start)
+            db.execute("INSERT INTO saas_cobrancas(id,loja_id,contrato_id,ambiente,provedor_id,valor_centavos,status,vencimento,pago_em,periodo_fim,fatura_url,atualizado_em) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ambiente,provedor_id) DO UPDATE SET status=excluded.status,pago_em=COALESCE(saas_cobrancas.pago_em,excluded.pago_em),vencimento=excluded.vencimento,periodo_fim=excluded.periodo_fim,fatura_url=excluded.fatura_url,atualizado_em=excluded.atualizado_em",
+                (row['ambiente']+':'+pid,row['loja_id'],row['id'],row['ambiente'],pid,row['valor_centavos'],status,start,paid,end,safe_invoice(p.get('invoiceUrl')),int(time.time())))
+            db.execute('UPDATE saas_contratos SET cliente_id=? WHERE id=?',(customer,row['id']))
+        paid_end = db.execute("SELECT MAX(periodo_fim) AS fim FROM saas_cobrancas WHERE contrato_id=? AND status IN ('CONFIRMED','RECEIVED')",(row['id'],)).fetchone()['fim']
+        # Fecha somente esta cobrança avulsa; não há recorrência para cancelar.
+        ever_paid = any(k['pago_em'] for k in db.execute('SELECT pago_em FROM saas_cobrancas WHERE contrato_id=?',(row['id'],)).fetchall())
+        state = 'cancelada' if ever_paid else row['status']
+        db.execute('UPDATE saas_contratos SET status=?,pago_ate=?,proximo_vencimento=NULL,erro=NULL,atualizado_em=? WHERE id=?',(state,paid_end,int(time.time()),row['id']))
+
     def sync_contract(cid,payment_hint=None):
         # Serializa leituras canônicas e gravações inclusive entre processos.
         # Nenhuma consulta antiga sobrescreve um estorno ou cancelamento novo.
@@ -315,6 +367,9 @@ def instalar(app,c):
         found = db.execute('SELECT * FROM saas_contratos WHERE id=? AND ambiente=?',(cid,environment())).fetchone()
         if not found or not found['checkout_id']: return
         row = dict(found)
+        terms = db.execute('SELECT * FROM saas_condicoes WHERE id=?',(cid,)).fetchone()
+        if terms and terms['oferta'].startswith('pix_'):
+            return sync_pix(db,row,terms,payment_hint)
         sid = row['assinatura_id']
         if not sid:
             data = api('GET','/payments?'+urllib.parse.urlencode({'checkoutSession':row['checkout_id'],'limit':100}))
@@ -395,6 +450,12 @@ def instalar(app,c):
         elif kind.startswith('PAYMENT_'):
             payment = api('GET','/payments/'+ident(event['recurso_id']))
             sid = payment.get('subscription')
+            if not sid:
+                with banco() as db:
+                    pix_row = db.execute("SELECT s.* FROM saas_contratos s JOIN saas_condicoes t ON t.id=s.id LEFT JOIN saas_cobrancas p ON p.contrato_id=s.id AND p.ambiente=s.ambiente WHERE s.ambiente=? AND t.oferta IN ('pix_60_v1','pix_90_v1') AND (s.checkout_id=? OR p.provedor_id=?) LIMIT 1",(environment(),payment.get('checkoutSession'),event['recurso_id'])).fetchone()
+                if pix_row:
+                    sync_contract(pix_row['id'],payment)
+                    return
             if payment.get('deleted') and not sid:
                 with banco() as db:
                     known = db.execute('SELECT p.*,s.assinatura_id,s.cliente_id FROM saas_cobrancas p JOIN saas_contratos s ON s.id=p.contrato_id AND s.ambiente=p.ambiente WHERE p.provedor_id=? AND p.ambiente=?',(event['recurso_id'],environment())).fetchone()

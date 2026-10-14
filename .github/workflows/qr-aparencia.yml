@@ -29,6 +29,8 @@ jobs:
         run: PYTHONPATH=. python tests/test_cobranca_saas.py
       - name: Validar Asaas producao simulada sem rede
         run: PYTHONPATH=. python tests/test_cobranca_producao.py
+      - name: Validar PIX mensal sem rede
+        run: PYTHONPATH=. python tests/test_cobranca_pix.py
       - name: Validar promocoes e recebimentos em SQLite
         run: PYTHONPATH=. python tests/test_promocoes.py
       - name: Validar recuperacao de leitura sem repetir cobrancas
@@ -115,6 +117,12 @@ jobs:
         env:
           TEST_ASAAS_DATABASE_URL: postgresql://postgres:asaas-test-only@127.0.0.1:5432/asaas_production_test
         run: PYTHONPATH=. python tests/test_cobranca_producao.py
+      - name: Criar banco isolado para PIX
+        run: python -c "import psycopg; psycopg.connect('postgresql://postgres:asaas-test-only@127.0.0.1:5432/asaas_test',autocommit=True).execute('CREATE DATABASE asaas_pix_test')"
+      - name: Validar PIX em PostgreSQL isolado
+        env:
+          TEST_ASAAS_DATABASE_URL: postgresql://postgres:asaas-test-only@127.0.0.1:5432/asaas_pix_test
+        run: PYTHONPATH=. python tests/test_cobranca_pix.py
   publicacao:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
