@@ -10,7 +10,7 @@ const fs=require('node:fs/promises');
  const r=await context.request.post(base+'/api/cadastro',{data:{nome:'Teste Contratação',slug:'billing-browser',email:'billing-browser@example.test',senha:'SenhaTeste!12345',aceite_termos:true}});
  assert.equal(r.status(),201,await r.text());
  const session=await (await context.request.get(base+'/api/sessao')).json();
- let state={disponivel:true,ambiente:'production',valor_centavos:6000,vendas_habilitadas:true,contratos:[],pagamentos:[]};
+ let state={disponivel:true,ambiente:'production',valor_centavos:6000,vendas_habilitadas:true,contratos:[],pagamentos:[],pix_disponivel:true,ciclos_promocionais_restantes:3};
  // Mock somente do provedor/contratação, sem rede financeira, em servidor temporário.
  await page.route('**/api/saas/assinatura',route=>route.fulfill({json:state}));
  await page.route('**/api/saas/checkout',async route=>{
@@ -37,6 +37,13 @@ const fs=require('node:fs/promises');
    await page.screenshot({path:'test-results/cobranca-'+theme+'-'+width+'.png',fullPage:true});
   }
  }
+ state={...state,contratos:[]};
+ await page.reload();
+ await page.locator('[data-pix-contract]').click();
+ await page.getByRole('button',{name:'Aceitar e abrir PIX',exact:true}).click();
+ await page.getByRole('link',{name:'Continuar no checkout seguro',exact:true}).waitFor();
+ assert.equal(requests[1].forma_pagamento,'PIX');
+ assert.equal(requests[1].aceite_pix,'pix_mensal_sem_debito_automatico_v1');
  state={...state,valor_centavos:9000,contratos:[],vendas_habilitadas:false};
  await page.reload();await page.getByRole('button',{name:'Contratar R$ 90/mês',exact:true}).waitFor();
  assert.equal(await page.locator('[data-real-contract]').isDisabled(),true);

@@ -125,3 +125,14 @@ https://docs.asaas.com/docs/checkout-com-assinatura-recorrente
 https://docs.asaas.com/docs/faq-assinaturas
 
 Homologação da oferta limitada: manter ASAAS_ENV=sandbox e habilitar ASAAS_SANDBOX_PROMO_TEST=true. Isso oferece o mesmo checkout60/endDate somente às contas de teste permitidas; nunca libera acesso real. Desligar o flag após testar. Os testes antigos continuam em R$90 quando esse flag está ausente.
+
+
+## Mensalidade por PIX
+
+Além da assinatura recorrente no cartão, o painel oferece checkout PIX avulso (billingTypes PIX, chargeTypes DETACHED). Cada confirmação canônica concede um mês; requer novo pagamento ao fim do período e não utiliza Pix Automático.
+
+Reutiliza saas_contratos, saas_condicoes (ofertas pix_60_v1 e pix_90_v1), saas_cobrancas e a fila saas_webhooks. Nenhuma chave nova ou migration destrutiva é necessária. A cobrança mensal quitada fecha o contrato técnico avulso para permitir renovação, mas contract_view mostra quitada/PIX confirmado. Refunds/deleted revogam acesso sem apagar histórico ou reiniciar benefício.
+
+Até três mensalidades PIX promocionais de R$60 por estabelecimento/ambiente. Meses PIX consumidos reduzem os ciclos restantes ao iniciar a oferta no cartão; uma oferta de cartão já utilizada continua sujeita às condições anteriores, sem reinício após cancelamento. O quarto PIX custa R$90, informado antes do aceite. Impede contratação durante período já pago ou recorrência/cartão ativa.
+
+Teste sem rede: tests/test_cobranca_pix.py em SQLite e PostgreSQL isolados. Teste de integração real deve ser feito no Sandbox; não transferir dinheiro real durante homologação. QR Code e copia e cola são exibidos no checkout hospedado do Asaas. Chaves e QR não são fabricados no frontend; redirecionamento nunca comprova pagamento.
