@@ -20,6 +20,7 @@ from decimal import Decimal, InvalidOperation
 
 from fastapi import BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 import qrcode
 
 DDL = {
@@ -215,14 +216,28 @@ def instalar(app,c):
                 'pix_disponivel':limited_offer_enabled(), 'ciclos_promocionais_restantes':max(0,3-pix_cycles(None,user['loja_id'])),
                 'contratos':[contract_view(r) for r in rows], 'pagamentos':[dict(r) for r in payments]}
 
+    def checkout_authorize(request):
+        with banco() as db:
+            owner(request,db,True)
+
     @app.post('/api/saas/checkout')
     async def checkout(request:Request):
+        # Valida sessão/CSRF antes de ler o corpo; não bloqueia o event loop.
+        await run_in_threadpool(checkout_authorize,request)
         body = {}
         if limited_offer_enabled() and enabled():
-            raw = await request.body()
-            if len(raw)>4096: raise HTTPException(413,'Pedido excede o limite.')
+            raw = bytearray()
+            async for chunk in request.stream():
+                if len(raw)+len(chunk)>4096:
+                    raise HTTPException(413,'Pedido excede o limite.')
+                raw.extend(chunk)
             try: body = json.loads(raw)
             except (ValueError,TypeError): raise HTTPException(422,'Confirme as condições da contratação.') from None
+        return await run_in_threadpool(checkout_order,request,body)
+
+    def checkout_order(request,body):
+        # Banco e Asaas síncronos ficam no pool limitado de trabalhadores.
+        # A autorização é conferida novamente antes da tentativa persistida.
         if limited_offer_enabled() and enabled() and (not isinstance(body,dict) or body.get('aceite_condicoes') != 'tres_meses_60_depois_nova_contratacao_90_v1'):
             raise HTTPException(422,'Confirme as condições da contratação.')
         method = body.get('forma_pagamento','CREDIT_CARD')
@@ -541,20 +556,37 @@ def instalar(app,c):
             terms = db.execute('SELECT oferta FROM saas_condicoes WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchone()
             if not row or not terms or not terms['oferta'].startswith('pix_'): raise HTTPException(404,'PIX não encontrado.')
             c['limitar'](request,'asaas-pix-qr',20,60)
-        sync_contract(cid)
         with banco() as db:
-            row = db.execute('SELECT * FROM saas_contratos WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchone()
             payments = db.execute('SELECT * FROM saas_cobrancas WHERE contrato_id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchall()
         def result(data): return JSONResponse(data,headers={'Cache-Control':'no-store','Pragma':'no-cache'})
         if any(p['status'] in ('CONFIRMED','RECEIVED') for p in payments): return result({'situacao':'pago'})
+        if row['status'] in ('cancelada','cancelando'): return result({'situacao':'encerrado'})
         pending = [p for p in payments if p['status'] in ('PENDING','OVERDUE')]
+        # Consulta somente leitura: nenhum bloqueio financeiro global durante
+        # chamadas ao Asaas. Webhook/worker continuam responsáveis pelo ledger.
+        if not pending and not payments and row['checkout_id']:
+            page = api('GET','/payments?'+urllib.parse.urlencode({'checkoutSession':row['checkout_id'],'limit':2}))
+            if page.get('hasMore'): raise HTTPException(409,'Cobrança PIX exige conferência.')
+            discovered = page.get('data',[])
+            if any(p.get('checkoutSession')!=row['checkout_id'] for p in discovered):
+                raise HTTPException(409,'Vínculo PIX exige conferência.')
+            pending = [{'provedor_id':ident(p['id'])} for p in discovered]
         if not pending:
-            return result({'situacao':'encerrado' if row['status'] in ('cancelada','expirada') else 'aguardando_dados'})
+            return result({'situacao':'encerrado' if row['status']=='expirada' else 'aguardando_dados'})
         if len(pending)!=1: raise HTTPException(409,'Cobrança PIX exige conferência.')
-        p = api('GET','/payments/'+ident(pending[0]['provedor_id']))
-        if p.get('deleted') or p.get('status') not in ('PENDING','OVERDUE'): return result({'situacao':'atualizar'})
-        if p.get('checkoutSession')!=row['checkout_id'] or p.get('customer')!=row['cliente_id'] or p.get('billingType')!='PIX' or p.get('subscription') or cents(p.get('value'))!=row['valor_centavos']:
-            raise HTTPException(409,'Vínculo PIX exige conferência.')
+        pid = ident(pending[0]['provedor_id'])
+        p = api('GET','/payments/'+pid)
+        try:
+            valid = (p.get('id')==pid and p.get('checkoutSession')==row['checkout_id']
+                and (not row['cliente_id'] or p.get('customer')==row['cliente_id'])
+                and bool(ident(p.get('customer'))) and p.get('billingType')=='PIX'
+                and not p.get('subscription') and cents(p.get('value'))==row['valor_centavos'])
+        except ValueError:
+            valid = False
+        if p.get('deleted'): return result({'situacao':'atualizar'})
+        if not valid: raise HTTPException(409,'Vínculo PIX exige conferência.')
+        if p.get('status') in ('CONFIRMED','RECEIVED'): return result({'situacao':'pago'})
+        if p.get('status') not in ('PENDING','OVERDUE'): return result({'situacao':'atualizar'})
         qr = api('GET','/payments/'+ident(p['id'])+'/pixQrCode')
         payload = qr.get('payload')
         if not isinstance(payload,str) or not payload.startswith('000201') or not 30<=len(payload)<=4096 or not payload.isascii():
@@ -569,7 +601,10 @@ def instalar(app,c):
         # Renderização local do MESMO código oficial. Nenhuma imagem externa,
         # chave genérica ou alteração no payload de pagamento.
         image=qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,box_size=1,border=4)
-        image.add_data(payload);image.make(fit=True)
+        try:
+            image.add_data(payload);image.make(fit=True)
+        except qrcode.exceptions.DataOverflowError:
+            raise HTTPException(502,'Código PIX excede o limite de renderização.') from None
         matrix=image.get_matrix()
         if len(matrix)>185: raise HTTPException(502,'Código PIX excede o limite de renderização.')
         return result({'situacao':'pendente','payload':payload,'matriz':matrix,'expira_em':expiry.isoformat(),'valor_centavos':row['valor_centavos']})
