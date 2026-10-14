@@ -343,7 +343,7 @@ def instalar(app,c):
             paid = p.get('paymentDate') or p.get('confirmedDate') or p.get('clientPaymentDate')
             paid = date.fromisoformat(str(paid)[:10]).isoformat() if paid else None
             if status in ('CONFIRMED','RECEIVED') and not paid: raise ValueError('PIX sem data de confirmação.')
-            if status not in ('CONFIRMED','RECEIVED'): paid = previous['pago_em'] if previous else None
+            if status not in ('CONFIRMED','RECEIVED','REFUNDED','REFUND_IN_PROGRESS','CHARGEBACK_REQUESTED','CHARGEBACK_DISPUTE','AWAITING_CHARGEBACK_REVERSAL'): paid = previous['pago_em'] if previous else None
             start = previous['vencimento'] if previous and previous['pago_em'] else max(terms['primeiro_vencimento'],paid or terms['primeiro_vencimento'])
             end = previous['periodo_fim'] if previous and previous['pago_em'] else month_end(start)
             db.execute("INSERT INTO saas_cobrancas(id,loja_id,contrato_id,ambiente,provedor_id,valor_centavos,status,vencimento,pago_em,periodo_fim,fatura_url,atualizado_em) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ambiente,provedor_id) DO UPDATE SET status=excluded.status,pago_em=COALESCE(saas_cobrancas.pago_em,excluded.pago_em),vencimento=excluded.vencimento,periodo_fim=excluded.periodo_fim,fatura_url=excluded.fatura_url,atualizado_em=excluded.atualizado_em",

@@ -114,4 +114,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert payments['pay_pix_5']['deleted'] is True
     assert b.post('/api/saas/checkout',json=pix,headers=headers[1]).status_code==200
     assert checkouts[-1]['items'][0]['value']==60
+    # Estorno recebido antes do evento de pagamento mantém consumo histórico.
+    payments['pay_pix_6'].update(status='REFUNDED',paymentDate=datetime.now(appmod.BRASIL).date().isoformat())
+    assert event('pay_pix_6',41,'PAYMENT_REFUNDED').status_code==200
+    assert b.get('/api/assinatura').json()['ativa'] is False
+    assert b.get('/api/saas/assinatura').json()['ciclos_promocionais_restantes']==2
 print('OK PIX: checkout avulso, preço no servidor, confirmação, isolamento, deduplicação, três meses, estorno e exclusão.')
