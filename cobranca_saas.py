@@ -19,7 +19,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from fastapi import BackgroundTasks, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+import qrcode
 
 DDL = {
     'saas_contratos': 'id TEXT PRIMARY KEY,loja_id TEXT NOT NULL,ambiente TEXT NOT NULL,usuario_id TEXT NOT NULL,valor_centavos INTEGER NOT NULL,checkout_id TEXT,assinatura_id TEXT,cliente_id TEXT,status TEXT NOT NULL,proximo_vencimento TEXT,pago_ate TEXT,criado_em BIGINT NOT NULL,atualizado_em BIGINT NOT NULL,erro TEXT',
@@ -531,6 +532,47 @@ def instalar(app,c):
             db.execute("INSERT INTO saas_webhooks(id,ambiente,tipo,recurso_id,referencia,status,tentativas,proxima_tentativa,criado_em) VALUES(?,?,?,?,?,'pendente',0,?,?) ON CONFLICT(id) DO NOTHING",(environment()+':'+eid,environment(),kind,rid,ref,int(time.time()),int(time.time())))
         background.add_task(tick)
         return {'recebido':True}
+
+    @app.get('/api/saas/contratos/{cid}/pix')
+    def pix_code(cid:str,request:Request):
+        with banco() as db:
+            user = owner(request,db)
+            row = db.execute('SELECT * FROM saas_contratos WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchone()
+            terms = db.execute('SELECT oferta FROM saas_condicoes WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchone()
+            if not row or not terms or not terms['oferta'].startswith('pix_'): raise HTTPException(404,'PIX não encontrado.')
+            c['limitar'](request,'asaas-pix-qr',20,60)
+        sync_contract(cid)
+        with banco() as db:
+            row = db.execute('SELECT * FROM saas_contratos WHERE id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchone()
+            payments = db.execute('SELECT * FROM saas_cobrancas WHERE contrato_id=? AND loja_id=? AND ambiente=?',(cid,user['loja_id'],environment())).fetchall()
+        def result(data): return JSONResponse(data,headers={'Cache-Control':'no-store','Pragma':'no-cache'})
+        if any(p['status'] in ('CONFIRMED','RECEIVED') for p in payments): return result({'situacao':'pago'})
+        pending = [p for p in payments if p['status'] in ('PENDING','OVERDUE')]
+        if not pending:
+            return result({'situacao':'encerrado' if row['status'] in ('cancelada','expirada') else 'aguardando_dados'})
+        if len(pending)!=1: raise HTTPException(409,'Cobrança PIX exige conferência.')
+        p = api('GET','/payments/'+ident(pending[0]['provedor_id']))
+        if p.get('deleted') or p.get('status') not in ('PENDING','OVERDUE'): return result({'situacao':'atualizar'})
+        if p.get('checkoutSession')!=row['checkout_id'] or p.get('customer')!=row['cliente_id'] or p.get('billingType')!='PIX' or p.get('subscription') or cents(p.get('value'))!=row['valor_centavos']:
+            raise HTTPException(409,'Vínculo PIX exige conferência.')
+        qr = api('GET','/payments/'+ident(p['id'])+'/pixQrCode')
+        payload = qr.get('payload')
+        if not isinstance(payload,str) or not payload.startswith('000201') or not 30<=len(payload)<=4096 or not payload.isascii():
+            raise HTTPException(502,'O Asaas ainda não disponibilizou um código PIX válido. Tente novamente.')
+        expires = qr.get('expirationDate')
+        try:
+            expiry = datetime.fromisoformat(expires.replace('Z','+00:00'))
+            if len(expires)==10: expiry=expiry.replace(hour=23,minute=59,second=59)
+            if expiry.tzinfo is None: expiry=expiry.replace(tzinfo=c['BRASIL'])
+        except (ValueError,TypeError,AttributeError): raise HTTPException(502,'Validade do PIX indisponível. Tente novamente.') from None
+        if expiry<=datetime.now(c['BRASIL']): return result({'situacao':'expirado'})
+        # Renderização local do MESMO código oficial. Nenhuma imagem externa,
+        # chave genérica ou alteração no payload de pagamento.
+        image=qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,box_size=1,border=4)
+        image.add_data(payload);image.make(fit=True)
+        matrix=image.get_matrix()
+        if len(matrix)>185: raise HTTPException(502,'Código PIX excede o limite de renderização.')
+        return result({'situacao':'pendente','payload':payload,'matriz':matrix,'expira_em':expiry.isoformat(),'valor_centavos':row['valor_centavos']})
 
     @app.post('/api/saas/sincronizar')
     def sync_owner(request:Request):

@@ -30,7 +30,7 @@ jobs:
       - name: Validar Asaas producao simulada sem rede
         run: PYTHONPATH=. python tests/test_cobranca_producao.py
       - name: Validar PIX mensal sem rede
-        run: PYTHONPATH=. python tests/test_cobranca_pix.py
+        run: QR_DECODE_TEST=1 PYTHONPATH=. python tests/test_cobranca_pix.py
       - name: Validar promocoes e recebimentos em SQLite
         run: PYTHONPATH=. python tests/test_promocoes.py
       - name: Validar recuperacao de leitura sem repetir cobrancas
@@ -60,6 +60,8 @@ jobs:
           node tests/test_frontend.cjs
       - name: Testar interface de cobranca e consentimento
         run: node tests/test_cobranca_browser.cjs
+      - name: Decodificar QR PIX efetivamente desenhado no navegador
+        run: QR_BROWSER_DECODE_TEST=1 python tests/test_pix_render.py
       - name: Testar central de notificacoes e experiencia mobile
         run: node tests/test_notificacoes_browser.cjs
       - name: Testar enquadramento e fotos dos profissionais

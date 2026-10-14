@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==503
     os.environ['ASAAS_PRODUCTION_ENABLED']='true'
     assert a.post('/api/saas/checkout',json={},headers=headers[0]).status_code==422
-    calls=[];payments={};checkouts=[]
+    calls=[];payments={};checkouts=[];qr_expired=False;qr_payload='00020101021226730014br.gov.bcb.pix2551pix-h.asaas.com/pixqrcode/cobv/pay_76575613967995145204000053039865802BR5905ASAAS6009Joinville61088922827162070503***63045E7A'
     def fake(method,path,body=None):
         from urllib.parse import parse_qs,urlparse
         calls.append((method,path,body))
@@ -44,6 +44,8 @@ with tempfile.TemporaryDirectory() as tmp:
         if path.startswith('/payments?'):
             co=parse_qs(urlparse(path).query)['checkoutSession'][0]
             return {'data':[dict(p) for p in payments.values() if p['checkoutSession']==co and not p.get('omit')],'hasMore':False}
+        if path.endswith('/pixQrCode'):
+            return {'payload':qr_payload,'expirationDate':'2000-01-01 23:59:59' if qr_expired else '2099-01-01 23:59:59','encodedImage':'IMAGEM_EXTERNA_INVALIDA'}
         if path.startswith('/payments/'):
             p=payments[path.split('/')[2]]
             if method=='DELETE': p['deleted']=True;return {'deleted':True}
@@ -64,6 +66,32 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.post('/api/saas/checkout',json=pix,headers=headers[0]).status_code==200 and len(checkouts)==1
     assert a.post('/api/saas/checkout',json=consent,headers=headers[0]).status_code==409
     assert b.post('/api/saas/contratos/'+first['id']+'/cancelar',headers=headers[1]).status_code==404
+    qr_url='/api/saas/contratos/'+first['id']+'/pix'
+    assert public.get(qr_url).status_code==401
+    assert b.get(qr_url).status_code==404
+    payments['pay_pix_1']['omit']=True
+    assert a.get(qr_url).json()['situacao']=='aguardando_dados'
+    payments['pay_pix_1']['omit']=False
+    qr_response=a.get(qr_url)
+    assert qr_response.status_code==200,qr_response.text
+    qr_data=qr_response.json()
+    assert qr_response.headers['cache-control']=='no-store'
+    assert qr_data['payload']==qr_payload and qr_data['valor_centavos']==6000
+    assert all(isinstance(v,bool) for row in qr_data['matriz'] for v in row)
+    if os.environ.get('QR_DECODE_TEST'):
+        folder=ROOT/'test-results';folder.mkdir(exist_ok=True)
+        (folder/'pix-qr-fixture.json').write_text(json.dumps(qr_data),encoding='utf-8')
+        import cv2,numpy as np
+        matrix=np.array(qr_data['matriz'],dtype=np.uint8)
+        image=cv2.resize((1-matrix)*255,None,fx=8,fy=8,interpolation=cv2.INTER_NEAREST)
+        decoded,_,_=cv2.QRCodeDetector().detectAndDecode(image)
+        assert decoded==qr_payload
+    qr_expired=True
+    assert a.get(qr_url).json()['situacao']=='expirado'
+    qr_expired=False
+    original_payload=qr_payload;qr_payload='INVALIDO'
+    assert a.get(qr_url).status_code==502
+    qr_payload=original_payload
     assert event('pay_pix_1',1).status_code==200
     assert a.get('/api/assinatura').json()['ativa'] is False
     # Dados financeiros do webhook não concedem acesso.
@@ -75,6 +103,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_pix_1',3).status_code==200
     assert a.get('/api/assinatura').json()['ativa'] is True
     assert b.get('/api/assinatura').json()['ativa'] is False
+    assert a.get(qr_url).json()['situacao']=='pago'
     summary=a.get('/api/saas/assinatura').json()
     assert summary['contratos'][0]['status']=='quitada' and len(summary['pagamentos'])==1
     assert summary['ciclos_promocionais_restantes']==2
