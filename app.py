@@ -396,6 +396,7 @@ class Barbeiro(Identificado):
     whatsapp: str = Field(default='',max_length=25)
 
 class Servico(Identificado):
+    foto_url: str = Field(default='',max_length=1000)
     preco: Decimal = Field(gt=0,le=10000,max_digits=7,decimal_places=2)
     duracao: int = Field(ge=5,le=480)
 
@@ -465,6 +466,15 @@ def salvar_config(data: Configuracao,request: Request):
         if raw and not (len(number) in (10,11) or (number.startswith('55') and len(number) in (12,13))):
             raise HTTPException(422,f"Informe o WhatsApp de {barber['nome']} com DDD ou deixe em branco.")
         barber['whatsapp']=number
+    for service in config['servicos']:
+        value=service['foto_url'].strip()
+        if value:
+            try:
+                parsed=urlsplit(value)
+                valid=parsed.scheme=='https' and bool(parsed.hostname) and not parsed.username and not parsed.password and not any(c.isspace() for c in value)
+            except ValueError: valid=False
+            if not valid: raise HTTPException(422,'Use um link HTTPS válido para a foto do serviço.')
+        service['foto_url']=value
     config['nome']=config['nome'].strip()
     raw_store_phone=config['whatsapp'].strip()
     config['whatsapp']=re.sub(r'\D','',raw_store_phone)
@@ -491,6 +501,9 @@ def salvar_config(data: Configuracao,request: Request):
         old_photos={b['id']:b.get('foto_url','') for b in old['barbeiros']}
         for incoming, barber in zip(data.barbeiros, config['barbeiros']):
             if 'foto_url' not in incoming.model_fields_set: barber['foto_url']=old_photos.get(barber['id'],'')
+        old_service_photos={s['id']:s.get('foto_url','') for s in old['servicos']}
+        for incoming, service in zip(data.servicos, config['servicos']):
+            if 'foto_url' not in incoming.model_fields_set: service['foto_url']=old_service_photos.get(service['id'],'')
         for b in old['barbeiros']:
             if b['id'] not in kept:
                 staff=db.execute('SELECT id FROM funcionarios WHERE loja_id=? AND barbeiro_id=?',(user['loja_id'],b['id'])).fetchone()
