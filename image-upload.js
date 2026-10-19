@@ -64,7 +64,7 @@ const PhotoCropper=(()=>{
   }
   throw Error('Não conseguimos reduzir esta foto. Escolha outra imagem.');
  }
- async function open(file){
+ async function open(file,options={}){
   if(active)throw Error('Finalize o ajuste da foto aberta.');
   if(!['image/jpeg','image/png','image/webp'].includes(file.type))throw Error('Escolha uma imagem JPG, PNG ou WebP.');
   if(file.size>15*1024*1024)throw Error('Escolha uma imagem com até 15 MB.');
@@ -78,6 +78,7 @@ const PhotoCropper=(()=>{
    dialog=document.createElement('dialog');dialog.className='ui-modal photo-crop-dialog';dialog.id='photo-crop-dialog';
    dialog.setAttribute('aria-labelledby','photo-crop-title');dialog.setAttribute('aria-describedby','photo-crop-help');
    dialog.innerHTML='<h2 id="photo-crop-title">Ajustar foto do profissional</h2><p id="photo-crop-help" class="muted">Arraste a foto com o dedo ou o mouse. Ajuste o zoom para enquadrar o rosto dentro do círculo.</p><div class="photo-crop-stage"><canvas width="512" height="512" tabindex="0" role="img" aria-label="Prévia circular. Arraste para mover ou use as setas do teclado."></canvas></div><label>Zoom<input id="photo-crop-zoom" type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom da foto"></label><p id="photo-crop-message" class="muted" role="status">A foto será salva quadrada, com o enquadramento mostrado no círculo.</p><div class="modal-actions"><button type="button" class="secondary" data-crop-cancel>Cancelar</button><button type="button" data-crop-save>Salvar foto</button></div>';
+   if(options.service){dialog.querySelector('h2').textContent='Ajustar foto do serviço';dialog.querySelector('#photo-crop-help').textContent='Arraste a imagem e ajuste o zoom para enquadrar o serviço.';}
    document.body.append(dialog);
    const canvas=dialog.querySelector('canvas'),ctx=canvas.getContext('2d'),zoomInput=dialog.querySelector('input'),message=dialog.querySelector('[role=status]');
    if(!ctx)throw Error('Seu navegador não conseguiu preparar a foto.');
@@ -111,35 +112,37 @@ const PhotoCropper=(()=>{
 })();
 
 /* Editor compartilhado entre Equipe e Configurações > Profissionais. */
-const ProfessionalPhotos=(()=>{
+function createCatalogPhotos(type){
+ const collection=type==='professional'?'barbeiros':'servicos',subject=type==='professional'?'profissional':'serviço';
+ const avatar=b=>type==='professional'?UI.professional(b):UI.avatar(b.nome,b.foto_url||'');
  const states=new Map();
- function markup(b){return '<section class="professional-photo" data-professional-photo="'+esc(b.id)+'"><h3>Foto do profissional</h3><div class="image-preview logo photo-preview">'+UI.professional(b)+'</div><input type="file" accept="image/jpeg,image/png,image/webp" hidden aria-label="Escolher foto do profissional"><input type="hidden" data-campo="foto_url" value="'+esc(b.foto_url||'')+'"><div class="row image-actions"><button type="button" class="secondary" data-photo-pick disabled>Escolher foto</button><button type="button" data-photo-save hidden>Salvar foto</button><button type="button" class="secondary" data-photo-discard hidden>Descartar</button><button type="button" class="secondary" data-photo-remove '+(b.foto_url?'':'hidden')+'>Remover foto</button></div><p class="muted" role="status">Até 512 px e 120 KB após redução.</p></section>';}
+ function markup(b){return '<section class="professional-photo" data-'+type+'-photo="'+esc(b.id)+'"><h3>Foto do '+subject+'</h3><div class="image-preview logo photo-preview">'+avatar(b)+'</div><input type="file" accept="image/jpeg,image/png,image/webp" hidden aria-label="Escolher foto do '+subject+'"><input type="hidden" data-campo="foto_url" value="'+esc(b.foto_url||'')+'"><div class="row image-actions"><button type="button" class="secondary" data-photo-pick disabled>Escolher foto</button><button type="button" data-photo-save hidden>Salvar foto</button><button type="button" class="secondary" data-photo-discard hidden>Descartar</button><button type="button" class="secondary" data-photo-remove '+(b.foto_url?'':'hidden')+'>Remover foto</button></div><p class="muted" role="status">Até 512 px e 120 KB após redução.</p></section>';}
  function ready(){for(const [box,state] of states){if(!box.isConnected){if(state.url)URL.revokeObjectURL(state.url);states.delete(box);continue;}if(state.busy||state.blob){mensagem('Salve ou descarte a foto escolhida antes de salvar as configurações.',true);return false;}}return true;}
  async function bind(){
   for(const [box,state] of states)if(!box.isConnected){if(state.url)URL.revokeObjectURL(state.url);states.delete(box);}
   let enabled=false;try{enabled=(await api('/api/imagens/status')).disponivel;}catch{}
-  document.querySelectorAll('[data-professional-photo]').forEach(box=>{
-   const id=box.dataset.professionalPhoto,saved=config.barbeiros.some(b=>b.id===id),pick=box.querySelector('[data-photo-pick]'),file=box.querySelector('[type=file]'),input=box.querySelector('[data-campo=foto_url]'),preview=box.querySelector('.photo-preview'),feedback=box.querySelector('[role=status]');
+  document.querySelectorAll('[data-'+type+'-photo]').forEach(box=>{
+   const id=box.getAttribute('data-'+type+'-photo'),saved=config[collection].some(b=>b.id===id),pick=box.querySelector('[data-photo-pick]'),file=box.querySelector('[type=file]'),input=box.querySelector('[data-campo=foto_url]'),preview=box.querySelector('.photo-preview'),feedback=box.querySelector('[role=status]');
    if(states.has(box)){pick.disabled=!enabled||!saved;return;}
    const state={busy:false,blob:null,url:''};states.set(box,state);
    function clear(){if(state.url)URL.revokeObjectURL(state.url);state.blob=null;state.url='';}
-   function draw(url){preview.innerHTML=UI.professional({id,nome:config.barbeiros.find(b=>b.id===id)?.nome||'Profissional',foto_url:url});box.querySelector('[data-photo-save]').hidden=!state.blob;box.querySelector('[data-photo-discard]').hidden=!state.blob;box.querySelector('[data-photo-remove]').hidden=!!state.blob||!input.value;}
-   function lock(value){state.busy=value;box.querySelectorAll('button').forEach(b=>b.disabled=value);pick.disabled=value||!enabled||!config.barbeiros.some(b=>b.id===id);}
+   function draw(url){preview.innerHTML=avatar({id,nome:config[collection].find(b=>b.id===id)?.nome||subject,foto_url:url});box.querySelector('[data-photo-save]').hidden=!state.blob;box.querySelector('[data-photo-discard]').hidden=!state.blob;box.querySelector('[data-photo-remove]').hidden=!!state.blob||!input.value;}
+   function lock(value){state.busy=value;box.querySelectorAll('button').forEach(b=>b.disabled=value);pick.disabled=value||!enabled||!config[collection].some(b=>b.id===id);}
    state.draw=draw;
    function persist(url){
-    const b=config.barbeiros.find(b=>b.id===id);if(b)b.foto_url=url;
-    document.querySelectorAll('[data-professional-photo]').forEach(other=>{
-     if(other.dataset.professionalPhoto!==id)return;
+    const b=config[collection].find(b=>b.id===id);if(b)b.foto_url=url;
+    document.querySelectorAll('[data-'+type+'-photo]').forEach(other=>{
+     if(other.getAttribute('data-'+type+'-photo')!==id)return;
      other.querySelector('[data-campo=foto_url]').value=url;
      if(other!==box&&!states.get(other)?.blob)states.get(other)?.draw(url);
     });
-    if(b)document.querySelectorAll('[data-professional-avatar]').forEach(avatar=>{
+    if(type==='professional'&&b)document.querySelectorAll('[data-professional-avatar]').forEach(avatar=>{
      if(avatar.dataset.professionalAvatar===id)avatar.outerHTML=UI.professional(b,avatar.classList.contains('large')?'large':'');
     });
     input.value=url;
    }
    pick.disabled=!enabled||!saved;
-   if(!saved)feedback.textContent='Salve o novo profissional nas configurações antes de enviar a foto.';
+   if(!saved)feedback.textContent='Salve o novo '+subject+' nas configurações antes de enviar a foto.';
    else if(!enabled)feedback.textContent='Envio pela galeria indisponível. Confira o armazenamento de imagens.';
    pick.onclick=()=>file.click();
    file.onchange=async()=>{
@@ -147,7 +150,7 @@ const ProfessionalPhotos=(()=>{
     lock(true);feedback.textContent='Abrindo ajuste da foto…';
     let save=false;
     try{
-     const blob=await PhotoCropper.open(chosen);
+     const blob=await PhotoCropper.open(chosen,{service:type==='service'});
      if(!blob){feedback.textContent='Ajuste cancelado. A foto anterior foi mantida.';return;}
      if(!box.isConnected)return;
      clear();state.blob=blob;state.url=URL.createObjectURL(blob);draw(state.url);
@@ -157,10 +160,12 @@ const ProfessionalPhotos=(()=>{
     if(save)await upload();
    };
    box.querySelector('[data-photo-discard]').onclick=()=>{clear();draw(input.value);feedback.textContent='Alteração descartada.';};
-   async function upload(){if(!state.blob||state.busy)return;lock(true);feedback.textContent='Salvando foto na nuvem…';try{const response=await fetch('/api/equipe/'+encodeURIComponent(id)+'/foto',{method:'POST',headers:{'Content-Type':state.blob.type,'X-CSRF-Token':csrf},body:state.blob});const data=await response.json().catch(()=>({}));if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Não foi possível salvar a foto.');persist(data.url);clear();draw(data.url);feedback.textContent='Foto salva! Já aparece na escolha do profissional.';}catch(e){feedback.textContent=e.message||'Falha de conexão. Tente novamente.';}finally{lock(false);}}
+   async function upload(){if(!state.blob||state.busy)return;lock(true);feedback.textContent='Salvando foto na nuvem…';try{const response=await fetch((type==='professional'?'/api/equipe/':'/api/servicos/')+encodeURIComponent(id)+'/foto',{method:'POST',headers:{'Content-Type':state.blob.type,'X-CSRF-Token':csrf},body:state.blob});const data=await response.json().catch(()=>({}));if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Não foi possível salvar a foto.');persist(data.url);clear();draw(data.url);feedback.textContent='Foto salva! Já aparece na página de agendamento.';}catch(e){feedback.textContent=e.message||'Falha de conexão. Tente novamente.';}finally{lock(false);}}
    box.querySelector('[data-photo-save]').onclick=upload;
-   box.querySelector('[data-photo-remove]').onclick=async()=>{if(state.busy)return;lock(true);try{await api('/api/equipe/'+encodeURIComponent(id)+'/foto',{method:'DELETE'});persist('');clear();draw('');feedback.textContent='Foto removida.';}catch(e){feedback.textContent=e.message;}finally{lock(false);}};
+   box.querySelector('[data-photo-remove]').onclick=async()=>{if(state.busy)return;lock(true);try{await api((type==='professional'?'/api/equipe/':'/api/servicos/')+encodeURIComponent(id)+'/foto',{method:'DELETE'});persist('');clear();draw('');feedback.textContent='Foto removida.';}catch(e){feedback.textContent=e.message;}finally{lock(false);}};
   });
  }
  return {markup,bind,ready};
-})();
+}
+const ProfessionalPhotos=createCatalogPhotos('professional');
+const ServicePhotos=createCatalogPhotos('service');
