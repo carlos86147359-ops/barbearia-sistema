@@ -28,8 +28,12 @@ const assert=require('node:assert/strict'),{chromium}=require('playwright'),fs=r
  const file={name:'corte.png',mimeType:'image/png',buffer:Buffer.from(source,'base64')};
  await editor.locator('input[type=file]').setInputFiles(file);
  await page.getByRole('heading',{name:'Ajustar foto do serviço',exact:true}).waitFor();
- await page.locator('[data-crop-cancel]').click();assert.equal(uploads,0);
+ await page.locator('[data-crop-cancel]').click();
+ await page.locator('#photo-crop-dialog').waitFor({state:'detached'});
+ await page.waitForFunction(()=>!document.querySelector('[data-service-photo=corte] [data-photo-pick]').disabled);
+ assert.equal(uploads,0);
  await editor.locator('input[type=file]').setInputFiles(file);
+ await page.getByRole('heading',{name:'Ajustar foto do serviço',exact:true}).waitFor();
  await page.locator('[data-crop-save]').click();
  await editor.getByText('Falha simulada. Tente novamente.',{exact:true}).waitFor();
  assert.equal((await (await context.request.get(base+'/api/configuracao')).json()).servicos[0].foto_url||'','');
