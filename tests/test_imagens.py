@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert a.get('/api/imagens/status').json()=={'disponivel':True}
     seen=[]
     def fake_send(data,shop,kind):
-        image=Image.open(io.BytesIO(data));assert image.format=='WEBP';assert max(image.size)<=imagens.LIMITS['foto' if kind.startswith('profissional-') else kind][0];assert len(data)<=imagens.LIMITS['foto' if kind.startswith('profissional-') else kind][1]
+        image=Image.open(io.BytesIO(data));assert image.format=='WEBP';assert max(image.size)<=imagens.LIMITS['foto' if kind.startswith(('profissional-','servico-')) else kind][0];assert len(data)<=imagens.LIMITS['foto' if kind.startswith(('profissional-','servico-')) else kind][1]
         seen.append((shop,kind));return 'https://res.cloudinary.com/teste-cloud/image/upload/v1/barbersaas/'+shop+'/'+kind+'.webp'
     with patch.object(imagens,'enviar',side_effect=fake_send):
         assert public.post('/api/imagens/logo',content=raw).status_code==401
@@ -86,6 +86,37 @@ with tempfile.TemporaryDirectory() as tmp:
     with patch.object(imagens,'enviar',side_effect=mod.HTTPException(502,'Falha de teste')):
         assert a.post('/api/equipe/prof/foto',content=raw,headers=headers[0]).status_code==502
         assert a.get('/api/configuracao').json()['barbeiros'][0]['foto_url']==photo
+    # Fotos dos serviços usam o mesmo processador, sem alterar fotos da equipe.
+    with mod.banco() as db: db.execute('DELETE FROM limites')
+    for client,h in ((a,headers[0]),(b,headers[1])):
+        cfg=client.get('/api/configuracao').json()
+        cfg['servicos']=[{'id':'corte','nome':'Corte','preco':35,'duracao':30}]
+        assert client.put('/api/configuracao',json=cfg,headers=h).status_code==200
+    with patch.object(imagens,'enviar',side_effect=fake_send):
+        assert public.post('/api/servicos/corte/foto',content=raw).status_code==401
+        assert a.post('/api/servicos/corte/foto',content=raw).status_code==403
+        assert a.post('/api/servicos/ausente/foto',content=raw,headers=headers[0]).status_code==404
+        assert a.post('/api/servicos/corte/foto',content=b'invalid',headers=headers[0]).status_code==422
+        r=a.post('/api/servicos/corte/foto',content=raw,headers=headers[0]);assert r.status_code==200,r.text
+        service_photo=r.json()['url'];assert '/servico-corte.webp' in service_photo
+        assert public.get('/api/publico/loja-0/configuracao').json()['servicos'][0]['foto_url']==service_photo
+        assert not b.get('/api/configuracao').json()['servicos'][0].get('foto_url')
+        r=b.post('/api/servicos/corte/foto',content=raw,headers=headers[1]);assert r.status_code==200
+        other_photo=r.json()['url'];assert other_photo!=service_photo
+        cfg=a.get('/api/configuracao').json();del cfg['servicos'][0]['foto_url']
+        assert a.put('/api/configuracao',json=cfg,headers=headers[0]).status_code==200
+        assert a.get('/api/configuracao').json()['servicos'][0]['foto_url']==service_photo
+        cfg=a.get('/api/configuracao').json();cfg['servicos'][0]['foto_url']='javascript:alert(1)'
+        assert a.put('/api/configuracao',json=cfg,headers=headers[0]).status_code==422
+    with patch.object(imagens,'enviar',side_effect=mod.HTTPException(502,'Falha de teste')):
+        assert a.post('/api/servicos/corte/foto',content=raw,headers=headers[0]).status_code==502
+        assert a.get('/api/configuracao').json()['servicos'][0]['foto_url']==service_photo
+    assert public.delete('/api/servicos/corte/foto').status_code==401
+    assert a.delete('/api/servicos/corte/foto').status_code==403
+    assert a.delete('/api/servicos/corte/foto',headers=headers[0]).status_code==200
+    assert a.get('/api/configuracao').json()['servicos'][0]['foto_url']==''
+    assert b.get('/api/configuracao').json()['servicos'][0]['foto_url']==other_photo
+    assert a.get('/api/configuracao').json()['barbeiros'][0]['foto_url']==photo
     invite=a.post('/api/equipe/prof/convite',json={'email':'prof@example.com'},headers=headers[0]).json()
     staff=TestClient(mod.app);r=staff.post('/api/convite/aceitar',json={'token':invite['link'].split('#')[1],'senha':'SenhaTeste!12345'});assert r.status_code==201
     sh={'X-CSRF-Token':r.json()['csrf']}
@@ -93,5 +124,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert staff.post('/api/imagens/logo',content=raw,headers=sh).status_code==403
     assert staff.post('/api/equipe/prof/foto',content=raw,headers=sh).status_code==403
     assert staff.delete('/api/equipe/prof/foto',headers=sh).status_code==403
+    assert staff.post('/api/servicos/corte/foto',content=raw,headers=sh).status_code==403
+    assert staff.delete('/api/servicos/corte/foto',headers=sh).status_code==403
     assert 'segredo-teste' not in public.get('/image-upload.js').text
     print('OK: imagem real recomprimida, limites, CSRF, papéis, isolamento, persistência, erro preservando URL e segredo somente no servidor.')

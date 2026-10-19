@@ -68,6 +68,7 @@ jobs:
         run: |
           node tests/test_photo_crop.cjs
           node tests/test_photo_crop_browser.cjs
+          node tests/test_service_photos_browser.cjs
       - name: Testar agendamento publico sem instalacao ou acesso administrativo
         run: node tests/test_public_booking_browser.cjs
       - name: Testar promocoes, fluxo mobile, recebimento e temas
