@@ -6,6 +6,7 @@ const assert=require('node:assert/strict'),{chromium}=require('playwright'),fs=r
  assert.equal(r.status(),201,await r.text());
  const session=await (await context.request.get(base+'/api/sessao')).json(),headers={'X-CSRF-Token':session.csrf};
  let cfg=await (await context.request.get(base+'/api/configuracao')).json();
+ cfg.barbeiros=[{id:'prof',nome:'Carlos'}];
  cfg.servicos=[{id:'corte',nome:'Corte com foto',preco:35,duracao:30},{id:'barba',nome:'Barba sem foto',preco:25,duracao:30}];
  assert.equal((await context.request.put(base+'/api/configuracao',{headers,data:cfg})).status(),200);
  const photo='https://res.cloudinary.com/teste-cloud/image/upload/v1/servico-corte.webp';
