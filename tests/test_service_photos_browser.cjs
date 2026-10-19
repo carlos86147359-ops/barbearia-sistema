@@ -1,0 +1,58 @@
+const assert=require('node:assert/strict'),{chromium}=require('playwright'),fs=require('node:fs/promises');
+(async()=>{
+ const browser=await chromium.launch(),context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true}),page=await context.newPage(),base='http://127.0.0.1:8788',errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ let r=await context.request.post(base+'/api/cadastro',{data:{nome:'Serviços com foto',slug:'service-photos',email:'services-photo@example.test',senha:'SenhaTeste!12345',aceite_termos:true}});
+ assert.equal(r.status(),201,await r.text());
+ const session=await (await context.request.get(base+'/api/sessao')).json(),headers={'X-CSRF-Token':session.csrf};
+ let cfg=await (await context.request.get(base+'/api/configuracao')).json();
+ cfg.servicos=[{id:'corte',nome:'Corte com foto',preco:35,duracao:30},{id:'barba',nome:'Barba sem foto',preco:25,duracao:30}];
+ assert.equal((await context.request.put(base+'/api/configuracao',{headers,data:cfg})).status(),200);
+ const photo='https://res.cloudinary.com/teste-cloud/image/upload/v1/servico-corte.webp';
+ let sent=null,uploads=0;
+ await page.route('**/api/imagens/status',route=>route.fulfill({json:{disponivel:true}}));
+ await page.route('https://res.cloudinary.com/teste-cloud/**',route=>route.fulfill({contentType:'image/webp',body:sent}));
+ await page.route('**/api/servicos/corte/foto',async route=>{
+  if(route.request().method()!=='POST')return route.continue();
+  uploads++;sent=route.request().postDataBuffer();assert.ok(sent.length<=120000);
+  if(uploads===1)return route.fulfill({status:502,json:{detail:'Falha simulada. Tente novamente.'}});
+  const fresh=await (await context.request.get(base+'/api/configuracao')).json();fresh.servicos[0].foto_url=photo;
+  const response=await context.request.put(base+'/api/configuracao',{headers,data:fresh});assert.equal(response.status(),200,await response.text());
+  await route.fulfill({json:{url:photo,bytes:sent.length}});
+ });
+ await page.goto(base+'/painel#config');await page.reload();
+ await page.locator('[data-config-section=config-servicos]').click();
+ const editor=page.locator('[data-service-photo=corte]');
+ await page.waitForFunction(()=>document.querySelector('[data-service-photo=corte] [data-photo-pick]')?.disabled===false);
+ const source=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=900;c.height=600;const x=c.getContext('2d');x.fillStyle='#ac7730';x.fillRect(0,0,900,600);x.fillStyle='#121212';x.fillRect(250,80,400,440);return c.toDataURL('image/png').split(',')[1];});
+ const file={name:'corte.png',mimeType:'image/png',buffer:Buffer.from(source,'base64')};
+ await editor.locator('input[type=file]').setInputFiles(file);
+ await page.getByRole('heading',{name:'Ajustar foto do serviço',exact:true}).waitFor();
+ await page.locator('[data-crop-cancel]').click();assert.equal(uploads,0);
+ await editor.locator('input[type=file]').setInputFiles(file);
+ await page.locator('[data-crop-save]').click();
+ await editor.getByText('Falha simulada. Tente novamente.',{exact:true}).waitFor();
+ assert.equal((await (await context.request.get(base+'/api/configuracao')).json()).servicos[0].foto_url||'','');
+ await editor.locator('[data-photo-save]').click();
+ await editor.getByText('Foto salva! Já aparece na página de agendamento.',{exact:true}).waitFor();
+ assert.equal(await editor.locator('[data-campo=foto_url]').inputValue(),photo);
+ await page.locator('#salvar-config').click();
+ await page.waitForFunction(()=>!document.getElementById('salvar-config').disabled);
+ cfg=await (await context.request.get(base+'/api/configuracao')).json();assert.equal(cfg.servicos[0].foto_url,photo);
+ await page.goto(base+'/b/service-photos');
+ await page.locator('#shop-home img[alt="Corte com foto"]').waitFor();
+ assert.equal(await page.locator('#shop-home img[alt="Barba sem foto"]').count(),0);
+ for(const width of [360,390,768,1440]){
+  await page.setViewportSize({width,height:900});
+  const size=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));assert.ok(size.scroll<=size.width+1,JSON.stringify(size));
+ }
+ await page.setViewportSize({width:390,height:844});await page.locator('#start-booking').click();
+ await page.locator('#service-choices img[alt="Corte com foto"]').waitFor();
+ await fs.mkdir('test-results',{recursive:true});await page.screenshot({path:'test-results/servicos-fotos-mobile.png',fullPage:true});
+ await page.goto(base+'/painel#config');await page.locator('[data-config-section=config-servicos]').click();
+ await page.locator('[data-service-photo=corte] [data-photo-remove]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-service-photo=corte] [data-campo=foto_url]')?.value==='');
+ cfg=await (await context.request.get(base+'/api/configuracao')).json();assert.equal(cfg.servicos[0].foto_url,'');
+ assert.equal(errors.length,0,errors.join('\n'));await browser.close();
+ console.log('OK fotos de serviços: editor, cancelamento, falha/retentativa, persistência, página pública, responsividade e remoção.');
+})().catch(e=>{console.error(e);process.exit(1)});
