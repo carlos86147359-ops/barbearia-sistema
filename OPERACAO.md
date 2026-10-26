@@ -5,7 +5,7 @@
 - Recuperação de senha e confirmação de e-mail, com integração Resend preparada. O envio depende da configuração abaixo.
 - Folgas, férias e feriados por profissional ou para toda a barbearia, em **Painel → Folgas e bloqueios**. O período final é exclusivo: um bloqueio até 12h permite começar às 12h. Reservas existentes precisam ser resolvidas antes de bloquear.
 - Link privado para o cliente cancelar ou mudar uma reserva futura. Ele aparece após reservar. O dono pode gerar outro em **Agenda → Link para o cliente**; um novo link invalida o anterior.
-- Histórico dos Pix confirmados, em **Gerenciar assinaturas**. A mensalidade segue R$ 90, com conferência manual no banco.
+- Cobrança do SaaS pelo Asaas, em **Plano e assinatura**: novas contratações têm R$ 60 por mês nos três primeiros ciclos promocionais, depois R$ 90 mediante nova contratação autorizada. Cartão tem renovação mensal durante os ciclos contratados; PIX paga uma mensalidade por vez, sem débito automático. A liberação depende da confirmação do Asaas no servidor, não do redirecionamento nem de envio de comprovante. A oferta termina após o terceiro ciclo; não há aumento automático para R$ 90. O histórico manual anterior permanece em **Gerenciar assinaturas** e não deve duplicar pagamentos do Asaas. Os planos de mensalistas das barbearias são separados da cobrança do SaaS.
 - Cortesia sem vencimento para a própria barbearia do administrador, em **Painel → Liberar minha conta como cortesia**. Exige sessão administrativa e CSRF, registra responsável, data e motivo, sem criar pagamento. A liberação entra no backup; cópias antigas sem cortesias continuam aceitas na restauração.
 - Download de cópia completa no painel administrativo, com confirmação da senha atual, e ferramenta de restauração em banco novo.
 - Páginas **/termos**, **/privacidade** e **/suporte**. Novos cadastros registram versão e momento do aceite. Contas anteriores não recebem um aceite fictício.
@@ -86,7 +86,7 @@ O ensaio com dados fictícios em SQLite confirmou login e criação de novas res
 
 Identificação autorizada: **Grupo Havo — Carlos Roberto Guilherme da Silva Junior**, **grupohavo061@gmail.com**, **(61) 98133-2994**. CNPJ e endereço comercial não foram informados e não foram inventados.
 
-As páginas explicam a cobrança manual, responsabilidades da barbearia, acesso da equipe, mensagens manuais, provedores e direitos sobre dados. O texto é uma versão inicial para revisão conforme o negócio crescer, não uma certificação jurídica. [Texto oficial da LGPD](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709compilado.htm).
+As páginas, atualizadas em 25 de outubro de 2026, explicam a cobrança pelo Asaas, a oferta inicial, a nova autorização após a oferta, as diferenças entre cartão e PIX, o cancelamento, responsabilidades da barbearia, acesso da equipe, mensagens manuais, provedores e direitos sobre dados. O texto é uma versão inicial para revisão conforme o negócio crescer, não uma certificação jurídica. [Texto oficial da LGPD](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709compilado.htm).
 
 ## Verificação técnica
 
