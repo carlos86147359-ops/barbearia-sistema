@@ -182,4 +182,28 @@ with tempfile.TemporaryDirectory() as tmp:
     assert event('pay_pix_6',41,'PAYMENT_REFUNDED').status_code==200
     assert b.get('/api/assinatura').json()['ativa'] is False
     assert b.get('/api/saas/assinatura').json()['ciclos_promocionais_restantes']==2
+    # Sem webhook: checkout expirado recentemente ainda pode ter PIX válido pago.
+    assert b.post('/api/saas/checkout',json=pix,headers=headers[1]).status_code==200
+    recovered=b.get('/api/saas/assinatura').json()['contratos'][0]
+    import time
+    old=int(time.time())-120
+    with appmod.banco() as db:
+        db.execute("UPDATE saas_contratos SET status='expirada',atualizado_em=? WHERE id=?",(old,recovered['id']))
+    # Uma falha temporária não concede acesso nem perde a tentativa.
+    working_api=billing.api
+    def unavailable(method,path,body=None):
+        raise HTTPException(502,'Indisponibilidade simulada')
+    billing.api=unavailable
+    appmod.asaas_tick()
+    assert b.get('/api/assinatura').json()['ativa'] is False
+    billing.api=working_api
+    payments['pay_pix_7'].update(status='RECEIVED',paymentDate=datetime.now(appmod.BRASIL).date().isoformat())
+    with appmod.banco() as db:
+        db.execute('UPDATE saas_contratos SET atualizado_em=? WHERE id=?',(old,recovered['id']))
+    appmod.asaas_tick()
+    assert b.get('/api/assinatura').json()['ativa'] is True
+    assert a.get('/api/assinatura').json()['ativa'] is False
+    assert len(b.get('/api/saas/assinatura').json()['pagamentos'])==3
+    appmod.asaas_tick()
+    assert len(b.get('/api/saas/assinatura').json()['pagamentos'])==3
 print('OK PIX: checkout avulso, preço no servidor, confirmação, isolamento, deduplicação, três meses, estorno e exclusão.')
