@@ -31,6 +31,9 @@ const fs=require('node:fs/promises');
  assert.equal(requests.length,1);
  assert.equal(requests[0].aceite_condicoes,'tres_meses_60_depois_nova_contratacao_90_v1');
  assert.match(await page.locator('#asaas-sandbox').innerText(),/nova contratação de R\$ 90/);
+ // O registro confirmado chega pela API; a tela se atualiza sem clique/reload.
+ state={...state,acesso_atual:{ativa:true,vencimento:'2099-01-01T00:00:00-03:00'},contratos:[{...state.contratos[0],status:'ativa',pago_ate:'2099-01-01'}]};
+ await page.waitForFunction(()=>document.querySelector('.plan-facts dd')?.textContent==='Ativo',null,{timeout:20000});
  await fs.mkdir('test-results',{recursive:true});
  for(const theme of ['claro','escuro']){
   const response=await context.request.put(base+'/api/aparencia',{headers:{'X-CSRF-Token':session.csrf},data:{tema:theme}});assert.equal(response.status(),200);

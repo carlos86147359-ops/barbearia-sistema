@@ -141,3 +141,12 @@ Teste sem rede: tests/test_cobranca_pix.py em SQLite e PostgreSQL isolados. Test
 ### Prazo do checkout PIX
 
 Novos checkouts PIX têm validade de 1440 minutos (24 horas), dentro do limite oficial do Asaas. O cartão continua em 60 minutos. A expiração efetiva do QR também é conferida pela API antes da exibição; não reativar códigos/cobranças já excluídos pelo provedor. A alteração vale para novos checkouts e não gera cobranças por si só.
+
+
+## Recuperação de confirmação e retorno do checkout
+
+- Webhooks permanecem persistidos e autenticados, com confirmação financeira canônica e repetição idempotente.
+- O trabalhador confere até cinco contratos por passagem: pendências a partir de 60 segundos e checkouts expirados nas últimas 48 horas, para recuperar PIX pago sem aviso entregue. Contratos ativos mantêm a conferência horária. A janela avança mesmo quando ainda não existe cobrança, evitando monopolização da fila pelos mesmos registros.
+- A tela Minha assinatura consulta apenas o resumo salvo, a cada 10 segundos por até dois minutos enquanto houver tentativa pendente. Não cria cobranças e não libera acesso pelo redirecionamento. Depois desse período, Atualizar situação continua disponível para consulta canônica ao Asaas.
+- Indisponibilidade do Asaas mantém a tentativa e a conferência pendentes; nunca deve ser resolvida gerando outra cobrança sem consultar a anterior.
+- Essas rotinas dependem do servidor estar executando. Render Free pode dormir e atrasar o recebimento; configurar instância sempre ativa antes de prometer liberação contínua em produção.

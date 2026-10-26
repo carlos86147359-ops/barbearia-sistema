@@ -517,9 +517,19 @@ def instalar(app,c):
         # Conferência leve no backend: recupera eventos perdidos enquanto o serviço
         # esteve desligado. Nunca usa loops no navegador ou tarefas só em memória.
         with banco() as db:
-            stale = db.execute("SELECT id FROM saas_contratos WHERE ambiente=? AND checkout_id IS NOT NULL AND atualizado_em<? AND status NOT IN ('cancelada','expirada') ORDER BY atualizado_em LIMIT 5",(environment(),now-3600)).fetchall()
+            stale = db.execute("""SELECT id FROM saas_contratos
+                WHERE ambiente=? AND checkout_id IS NOT NULL AND (
+                    (status IN ('checkout','aguardando_pagamento','incerta') AND atualizado_em<?)
+                    OR (status='expirada' AND criado_em>=? AND atualizado_em<?)
+                    OR (status NOT IN ('cancelada','expirada','checkout','aguardando_pagamento','incerta') AND atualizado_em<?)
+                ) ORDER BY atualizado_em,id LIMIT 5""",
+                (environment(),now-60,now-172800,now-60,now-3600)).fetchall()
         for row in stale:
-            try: sync_contract(row['id'])
+            try:
+                sync_contract(row['id'])
+                # Também avança a janela de checkouts ainda sem cobrança, evitando
+                # que os mesmos cinco contratos monopolizem cada passagem.
+                with banco() as db: db.execute('UPDATE saas_contratos SET atualizado_em=? WHERE id=?',(int(time.time()),row['id']))
             except Exception:
                 with banco() as db: db.execute('UPDATE saas_contratos SET atualizado_em=?,erro=? WHERE id=?',(now,'Conferência pendente; tente sincronizar novamente.',row['id']))
 
