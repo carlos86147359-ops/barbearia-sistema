@@ -183,8 +183,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert b.get('/api/assinatura').json()['ativa'] is False
     assert b.get('/api/saas/assinatura').json()['ciclos_promocionais_restantes']==2
     # Sem webhook: checkout expirado recentemente ainda pode ter PIX válido pago.
-    assert b.post('/api/saas/checkout',json=pix,headers=headers[1]).status_code==200
-    recovered=b.get('/api/saas/assinatura').json()['contratos'][0]
+    response=b.post('/api/saas/checkout',json=pix,headers=headers[1])
+    assert response.status_code==200,response.text
+    recovered=response.json()
     import time
     old=int(time.time())-120
     with appmod.banco() as db:
