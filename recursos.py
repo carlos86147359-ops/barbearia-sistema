@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from fastapi import BackgroundTasks, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-VERSAO_TERMOS='2026-10-02'
+VERSAO_TERMOS='2026-10-25'
 TABLES={
     'preferencias':['id','tema'],
     'lojas':['id','slug','configuracao'],
